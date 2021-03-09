@@ -161,6 +161,7 @@ def make_plots(
     for value in values:
         plt.figure(figsize=(12,8))
         plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
+        plt.savefig(f'./img/{data[0]["Condition1"][0]}_{value}')
     plt.show()
 
 def jupyter_make_plot():
@@ -173,22 +174,23 @@ def jupyter_make_plot():
         all_logdirs = ['data/'],
         legend = None,
         xaxis = 'TotalEnvInteracts',
-        values = 'AverageEpRet',
+        values = ['AverageEpRet', 'StdEpRet'],
         count = True,
         smooth = 1
     )
     make_plots(**kwargs)
-jupyter_make_plot()
+# jupyter_make_plot()
+
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--logdir',default=['data/ppo_HalfCheetah-v3'], nargs='*')
+    parser.add_argument('--logdir',default=['data/ppo_HalfCheetah-v3/'], nargs='*')
     parser.add_argument('--legend', '-l',nargs='*')
     parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
     parser.add_argument('--values', '-y', default='Performance', nargs='*')
     parser.add_argument('--count', action='store_true')
-    parser.add_argument('--smooth','-s', type=int, default=3)
+    parser.add_argument('--smooth','-s', type=int, default=1)
     parser.add_argument('--select', nargs='*')
     parser.add_argument('--exclude', nargs='*')
     parser.add_argument('--est', default='mean')

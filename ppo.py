@@ -9,9 +9,8 @@ import torch.nn.functional as F
 import numpy as np
 
 import gym
-import utils
-import network
-from logx import EpochLogger, setup_logger_kwargs
+import core.ppo_core as core
+from utils.logx import EpochLogger, setup_logger_kwargs
 
 os.environ['CUDA_VISBLE_DEVICES'] = '1'
 
@@ -20,7 +19,7 @@ class PPO:
     def __init__(
         self,
         env,
-        actor_critic=network.MLPActorCritic,
+        actor_critic=core.MLPActorCritic,
         ac_kwargs=dict(),
         gamma=0.99,
         clip_ratio=0.2,
@@ -170,8 +169,8 @@ if __name__ == '__main__':
     parser.add_argument('--train_pi_iters', type=int,default=80)
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
-    parser.add_argument('--target_kl', type=float, default='0.01')
-    parser.add_argument('--device', type=str, default='cuda:3')
+    parser.add_argument('--target_kl', type=float, default=0.01)
+    parser.add_argument('--device', type=str, default='cuda:2')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=1)
     parser.add_argument('--step_per_epoch', type=int, default=4000)
@@ -213,7 +212,7 @@ if __name__ == '__main__':
 
     kwargs = {
         "env": env,
-        "actor_critic": utils.MLPActorCritic,
+        "actor_critic": core.MLPActorCritic,
         "ac_kwargs": dict(hidden_sizes=[args.hidden]*args.layers_len),
         "gamma": args.gamma,
         "clip_ratio": args.clip_ratio,
@@ -231,7 +230,7 @@ if __name__ == '__main__':
     policy = PPO(**kwargs)
 
     # Count variables
-    var_counts = tuple(utils.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
+    var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
     logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
 
     # Set up model saving
@@ -239,14 +238,14 @@ if __name__ == '__main__':
 
     num_procs = 1
     local_steps_per_epoch = int(args.step_per_epoch / num_procs)
-    buf = utils.PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam)
+    buf = core.PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam)
 
 
     # Prepare for interaction with environment
     start_time = time.time()
     obs, done = env.reset(), False
     if args.obs_norm:
-        ObsNormal = utils.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
+        ObsNormal = core.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
         obs = ObsNormal.normalize(obs)
     episode_ret = 0.
     episode_len = 0.
