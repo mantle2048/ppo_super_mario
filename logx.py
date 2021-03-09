@@ -113,7 +113,7 @@ def is_json_serializable(v):
 def setup_logger_kwargs(exp_name, seed=None, data_dir=None, datestamp=False):
     """
     Sets up the output_dir for a logger and returns a dict for logger kwargs.
-    If no seed is given and datestamp is false, 
+    If no seed is given and datestamp is false,
     ::
         output_dir = data_dir/exp_name
     If a seed is given and datestamp is false,
@@ -122,8 +122,8 @@ def setup_logger_kwargs(exp_name, seed=None, data_dir=None, datestamp=False):
     If datestamp is true, amend to
     ::
         output_dir = data_dir/YY-MM-DD_exp_name/YY-MM-DD_HH-MM-SS_exp_name_s[seed]
-    You can force datestamp=True by setting ``FORCE_DATESTAMP=True`` in 
-    ``spinup/user_config.py``. 
+    You can force datestamp=True by setting ``FORCE_DATESTAMP=True`` in
+    ``spinup/user_config.py``.
     Args:
         exp_name (string): Name for experiment.
         seed (int): Seed for random number generators used by experiment.
@@ -151,7 +151,7 @@ def setup_logger_kwargs(exp_name, seed=None, data_dir=None, datestamp=False):
         relpath = os.path.join(relpath, subfolder)
 
     data_dir = data_dir or DEFAULT_DATA_DIR
-    print(DEFAULT_DATA_DIR)
+    print(f'Exp data are stored in {data_dir}')
     logger_kwargs = dict(output_dir=os.path.join(data_dir, relpath),
                          exp_name=exp_name)
     return logger_kwargs

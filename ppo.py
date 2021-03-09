@@ -30,6 +30,9 @@ class PPO:
         train_v_iters=80,
         lam=0.97,
         target_kl=0.01,
+        max_grad_norm=None,
+        use_clipped_value_loss=True,
+        clip_val_param = 80.0,
         device='cuda'
     ):
         # Create actor-critic module
@@ -41,6 +44,9 @@ class PPO:
         self.train_v_iters = train_v_iters
         self.lam = lam
         self.target_kl = target_kl
+        self.max_grad_norm=max_grad_norm
+        self.use_clipped_value_loss=use_clipped_value_loss
+        self.clip_val_param =  clip_val_param  # This value depends on environment and this can decrease the var of value functino
         self.device = device
 
         self.ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs).to(self.device)
@@ -64,10 +70,12 @@ class PPO:
         dist, logp = self.ac.pi(obs, act)
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean() - 0.01 * dist.entropy().mean()
+        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+        # loss_pi = -(torch.min(ratio * adv, clip_adv)).mean() - 0.01 * dist.entropy().mean()
+        # whether to use entropy depends on the performence
 
         # Useful extra info
-        approx_kl = (logp_old - logp).mean().item()
+        approx_kl = (logp_old - logp).mean().abs().item()
         entropy = dist.entropy().mean().item()
         clipped = ratio.gt(1+self.clip_ratio) | ratio.lt(1-self.clip_ratio)
         clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
@@ -77,7 +85,16 @@ class PPO:
 
     def compute_loss_v(self, data):
         obs, ret = data['obs'].to(self.device), data['ret'].to(self.device)
-        return F.mse_loss(self.ac.v(obs), ret)
+        if self.use_clipped_value_loss:
+            val_old = data['val'].to(self.device)
+            val = self.ac.v(obs)
+            val_clipped = val_old + (val - val_old).clamp(-self.clip_val_param, self.clip_val_param)
+            v_loss = (val - ret).pow(2)
+            v_loss_clipped = (val_clipped - ret).pow(2)
+            v_loss = torch.max(v_loss, v_loss_clipped).mean()
+            return v_loss
+        else:
+            return F.mse_loss(self.ac.v(obs), ret)
 
     def update(self, buf):
         data = buf.get()
@@ -119,6 +136,7 @@ class PPO:
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
+# Only off-policy algos need this
 def eval_policy(policy, env_name, seed, eval_episodes=10):
     eval_env = gym.make(env_name)
     eval_env.seed(seed + 100)
@@ -153,7 +171,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default='0.01')
-    parser.add_argument('--device', type=str, default='cuda:1')
+    parser.add_argument('--device', type=str, default='cuda:3')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=1)
     parser.add_argument('--step_per_epoch', type=int, default=4000)
@@ -161,6 +179,10 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=250)
     parser.add_argument('--max_timesteps', type=int, default=1e6)
     parser.add_argument('--save_freq', type=int, default=10)
+    parser.add_argument('--obs_norm',action='store_true')
+    parser.add_argument('--obs_clip',type=float,default=5.0)
+    parser.add_argument('--use_clipped_value_loss',action='store_true')
+    parser.add_argument('--clip_val_param',type=float, default=80.0)
     args = parser.parse_args()
 
     file_name = f'{args.policy}_{args.env}_{args.seed}'
@@ -168,15 +190,13 @@ if __name__ == '__main__':
     print(f'Policy: {args.policy}, Env: {args.env}, Seed: {args.seed}')
     print('-----' * 8)
 
-    if not os.path.exists('./results'):
-        os.makedirs('./results')
 
     if not os.path.exists('./models'):
         os.makedirs('./models')
 
 
     # Set up logger and save configuration
-    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed)
+    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed, datestamp=False)
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(args)
 
@@ -203,6 +223,8 @@ if __name__ == '__main__':
         "train_v_iters": args.train_v_iters,
         "lam": args.lam,
         "target_kl": args.target_kl,
+        "use_clipped_value_loss": args.use_clipped_value_loss,
+        "clip_val_param": args.clip_val_param,
         "device": args.device
     }
 
@@ -219,12 +241,13 @@ if __name__ == '__main__':
     local_steps_per_epoch = int(args.step_per_epoch / num_procs)
     buf = utils.PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam)
 
-    # Evaluate untrained policy
-    evalutions = [eval_policy(policy, args.env, args.seed)]
 
     # Prepare for interaction with environment
     start_time = time.time()
     obs, done = env.reset(), False
+    if args.obs_norm:
+        ObsNormal = utils.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
+        obs = ObsNormal.normalize(obs)
     episode_ret = 0.
     episode_len = 0.
 
@@ -234,6 +257,8 @@ if __name__ == '__main__':
             act, val, logp = policy.step(obs)
 
             next_obs, ret, done, _ = env.step(act)
+            if args.obs_norm:
+                next_obs = ObsNormal.normalize(next_obs)
             episode_ret += ret
             episode_len += 1
 
@@ -263,12 +288,6 @@ if __name__ == '__main__':
 
         policy.update(buf)
 
-        # Evaluate every Epoch
-        print(f'Step: {(epoch + 1) * local_steps_per_epoch}')
-        evalution = eval_policy(policy, args.env, args.seed)
-        evalutions.append(evalution)
-        np.save(f"./results/{file_name}", evalutions)
-
         # Log info about epoch
         logger.log_tabular('Exp', file_name)
         logger.log_tabular('Epoch', epoch)
@@ -285,7 +304,9 @@ if __name__ == '__main__':
         logger.log_tabular('ClipFrac', average_only=True)
         logger.log_tabular('StopIter', average_only=True)
         logger.log_tabular('Time', int((time.time()-start_time) / 60))
-        logger.log_tabular('AverageTestEpRet', evalution)
+        if args.obs_norm:
+            logger.log_tabular('obs_mean', ObsNormal.mean.mean())
+            logger.log_tabular('obs_std', np.sqrt(ObsNormal.var).mean())
         logger.dump_tabular()
 
 

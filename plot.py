@@ -24,6 +24,7 @@ def plot_data(data, xaxis='Epoch', value='AverageEpRet', condition="Condition1",
         for datum in data:
             x = np.asarray(datum[value])
             z = np.ones_like(x)
+            # The y is kernel conv(x, y) makes value in x to be the sum of windows size and then divide by conv(z, y) which represt the number of value in window
             smoothed_x = np.convolve(x,y,'same') / np.convolve(z, y,'same')
             datum[value] = smoothed_x
     if isinstance(data, list):
@@ -58,16 +59,20 @@ def get_datasets(logdir, condition=None):
     datasets = []
     for root, _, files in os.walk(logdir):
         if 'progress.txt' in files:
+            print(root, end=' ===> ')
             exp_name = None
             try:
                 config_path = open(os.path.join(root, 'config.json'))
                 config = json.load(config_path)
                 if 'exp_name' in config:
                     exp_name = config['exp_name']
+                if 'args' in config:
+                    seed = str(config['args']['seed'])
             except:
                 print('No file named config.json')
             condition1 = condition or exp_name or 'exp'
-            condition2 = condition1 + '-' + str(exp_idx)
+            condition2 = condition1 + '_' + seed + '-' + str(exp_idx)
+            print(condition2)
             exp_idx += 1
             if condition1 not in units:
                 units[condition1] = 0
@@ -78,8 +83,8 @@ def get_datasets(logdir, condition=None):
                 exp_data = pd.read_table(os.path.join(root,'progress.txt'))
             except:
                 print(f'Could not read from {os.path.join(root, "progress.txt")}')
-
                 continue
+
             performance = 'AverageTestEpRet' if 'AverageTestEpRet' in exp_data else 'AverageEpRet'
             exp_data.insert(len(exp_data.columns), 'Unit', unit)
             exp_data.insert(len(exp_data.columns), 'Condition1', condition1)
@@ -154,18 +159,23 @@ def make_plots(
     condition = 'Condition2' if count else 'Condition1'
     estimator = getattr(np, estimator) # choose what to show on main curve: mean? max? min?
     for value in values:
-        plt.figure()
+        plt.figure(figsize=(12,8))
         plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
     plt.show()
 
 def jupyter_make_plot():
-    # Theh following lines just for jupyter notebook. Because the ipython cannot support argparse
+    # Theh following function just for jupyter notebook. Because the ipython cannot support argparse
+    global exp_idx
+    global units
+    exp_idx = 0
+    units = dict()
     kwargs = dict(
-        all_logdirs =['data/ppo_HalfCheetah-v3'],
+        all_logdirs = ['data/'],
         legend = None,
         xaxis = 'TotalEnvInteracts',
-        values = 'Performance',
-        smooth = 3,
+        values = 'AverageEpRet',
+        count = True,
+        smooth = 1
     )
     make_plots(**kwargs)
 jupyter_make_plot()
@@ -173,12 +183,12 @@ jupyter_make_plot()
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--logdir',default='data/ppo_Hopper-v3', nargs='*')
+    parser.add_argument('--logdir',default=['data/ppo_HalfCheetah-v3'], nargs='*')
     parser.add_argument('--legend', '-l',nargs='*')
     parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
     parser.add_argument('--values', '-y', default='Performance', nargs='*')
     parser.add_argument('--count', action='store_true')
-    parser.add_argument('--smooth','-s', type=int, default=1)
+    parser.add_argument('--smooth','-s', type=int, default=3)
     parser.add_argument('--select', nargs='*')
     parser.add_argument('--exclude', nargs='*')
     parser.add_argument('--est', default='mean')

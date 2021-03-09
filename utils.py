@@ -215,5 +215,35 @@ class PPOBuffer:
         adv_mean, adv_std = self.adv_buf.mean(), self.adv_buf.std()
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
 
-        data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf)
+        data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
+
+
+class ObsNormalize():
+    def __init__(self, shape, clip=5.0):
+        self.n = 0
+        self.mean = np.zeros(shape)
+        self.mean_diff = np.zeros(shape)
+        self.var = np.zeros(shape)
+        self.clip = clip
+
+    def add(self, obs):
+        '''
+        by math
+        En = En-1 + (xn - En-1) / n
+        Fn = Fn-1 + (xn - En-1) * (xn - En)
+            Fn = n * Var_n | Fn-1 = (n - 1) * Var_n-1
+        So Var_n = (n-1)/n * (xn - En-1)**2 + (n-1)/n * Var_n-1
+        '''
+        assert obs.shape == self.mean.shape, "obs must be the same dim"
+        self.n += 1
+        old_mean = self.mean.copy()
+        self.mean += (obs - self.mean) / self.n
+        self.mean_diff += (obs - old_mean) * (obs - self.mean)
+        self.var = self.mean_diff/self.n if self.n > 1 else np.square(self.mean)
+
+    def normalize(self, obs):
+        obs = np.asarray(obs)
+        self.add(obs)
+        obs =  (obs - self.mean) / np.sqrt(self.var)
+        return np.clip(obs, -self.clip, self.clip)
