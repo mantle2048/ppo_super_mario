@@ -6,11 +6,13 @@ import time
 import argparse
 import torch
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 import numpy as np
 
 import gym
 import core.ppo_core as core
 from utils.logx import EpochLogger, setup_logger_kwargs
+from utils.env import make_mp_envs
 
 os.environ['CUDA_VISBLE_DEVICES'] = '1'
 
@@ -158,7 +160,7 @@ def eval_policy(policy, env_name, seed, eval_episodes=10):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--policy', type=str, default='ppo')
+    parser.add_argument('--policy', type=str, default='mp_ppo')
     parser.add_argument('--env', type=str, default='HalfCheetah-v3')
     parser.add_argument('--hidden', type=int, default=64)
     parser.add_argument('--layers_len', type=int, default=2)
@@ -171,9 +173,9 @@ if __name__ == '__main__':
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
     parser.add_argument('--device', type=str, default='cuda:3')
-    parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--cpu', type=int, default=1)
+    parser.add_argument('--cpu', type=int, default=4)
+    parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--step_per_epoch', type=int, default=4000)
     parser.add_argument('--max_episode_len', type=int, default=1000)
     parser.add_argument('--epochs', type=int, default=250)
@@ -196,20 +198,18 @@ if __name__ == '__main__':
 
 
     # Set up logger and save configuration
-    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed, datestamp=False)
+    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed, datestamp=args.datestamp)
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(args)
 
     # Init Envirorment
-    env = gym.make(args.env)
+    env = make_mp_envs(args.env, args.cpu, args.seed)
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
 
     # Set seeds
-    env.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    env.action_space.seed(args.seed)
 
     kwargs = {
         "env": env,
@@ -229,6 +229,7 @@ if __name__ == '__main__':
     }
 
     policy = PPO(**kwargs)
+    policy.ac.share_memory()
 
     # Count variables
     var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
@@ -238,28 +239,30 @@ if __name__ == '__main__':
     logger.setup_pytorch_saver(policy.ac.state_dict())
 
     local_steps_per_epoch = int(args.step_per_epoch / args.cpu)
-    buf = core.PPOBuffer( #Param
+    buf = core.PPO_mp_Buffer(
         obs_dim,
         act_dim,
         local_steps_per_epoch,
         args.gamma,
-        args.lam
+        args.lam,
+        args.cpu
     )
     # Prepare for interaction with environment
     start_time = time.time()
-    obs, done = env.reset(), False
+    obs, done = env.reset(), [False for _ in range(args.cpu)]
     if args.obs_norm:
         ObsNormal = core.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
         obs = ObsNormal.normalize(obs)
-    episode_ret = 0.
-    episode_len = 0.
+    episode_ret = np.zeros(args.cpu, dtype=np.float32)
+    episode_len = np.zeros(args.cpu)
+
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(args.epochs):
         for t in range(local_steps_per_epoch):
             act, val, logp = policy.step(obs)
 
-            next_obs, ret, done, _ = env.step(act)
+            next_obs, ret, done, info = env.step(act)
             if args.obs_norm:
                 next_obs = ObsNormal.normalize(next_obs)
             episode_ret += ret
@@ -271,23 +274,29 @@ if __name__ == '__main__':
 
             # Update obs (critical!)
             obs = next_obs
+            # In multiprocess env when a episode is terminal it will automatic reset and 
+            # the next_obs is the obs after reset,the real obs that cause terminal is stored in info['terminal_observation']
 
             timeout = episode_len == args.max_episode_len
-            terminal = done or timeout
+            terminal = done + timeout
             epoch_ended = t == local_steps_per_epoch - 1
-            if epoch_ended or terminal:
-                if epoch_ended and not terminal:
-                    print(f'Warning: Trajectory cut off by epoch at {episode_len} steps', flush=True)
-                # if trajectory didn't reach terminal state, bootstrap value target
-                if timeout or epoch_ended:
-                    _, val, _ = policy.step(obs)
-                else:
-                    val = 0
-                buf.finish_path(val)
-                if terminal:
-                    # only save EpRet / EpLen if trajectory finished
-                    logger.store(EpRet=episode_ret, EpLen=episode_len)
-                obs, episode_ret, episode_len = env.reset(), 0, 0
+
+            if epoch_ended or terminal.any():
+                for idx in range(args.cpu):
+                    if epoch_ended and not terminal[idx]:
+                        print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len} steps', flush=True)
+
+                    # if trajectory didn't reach terminal state, bootstrap value target
+                    if timeout[idx] or epoch_ended:
+                        ter_obs = info[idx]['terminal_observation']
+                        _, val, _ = policy.step(ter_obs)
+                    else:
+                        val = 0
+                    buf.finish_path(val, idx)
+                    if terminal[idx]:
+                        # only save EpRet / EpLen if trajectory finished
+                        logger.store(EpRet=episode_ret[idx], EpLen=episode_len[idx])
+                    episode_ret[idx], episode_len[idx] =  0., 0
 
         policy.update(buf)
 
@@ -316,4 +325,5 @@ if __name__ == '__main__':
         # Save model
         if (epoch % args.save_freq == 0) or (epoch == args.epochs - 1):
             torch.save(policy.ac.state_dict(), f'./models/{file_name}.pth')
-            logger.save_state({'env': env}, None)
+            # logger.save_state({'env': env}, None)
+            # I don't know how to save multi processing env

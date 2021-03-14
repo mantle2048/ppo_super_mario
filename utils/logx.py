@@ -8,6 +8,8 @@ import argparse
 import warnings
 import numpy as np
 import torch
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from user_config import DEFAULT_DATA_DIR, FORCE_DATESTAMP, DEFAULT_DATA_DIR
 
 
@@ -235,6 +237,7 @@ class Logger:
         try:
             joblib.dump(state_dict, os.path.join(self.output_dir, fname))
         except:
+            import ipdb; ipdb.set_trace()
             self.log('Warning: could not pickle state_dict.', color='red')
         self._pytorch_simple_save(itr)
 

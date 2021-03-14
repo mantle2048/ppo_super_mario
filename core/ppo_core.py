@@ -175,7 +175,7 @@ class ReplayBuffer:
 
 
 class PPOBuffer:
-    def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95, device="cpu"):
+    def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95):
         self.obs_buf = np.zeros(combined_shape(size, state_dim), dtype=np.float32)
         self.act_buf = np.zeros(combined_shape(size, action_dim), dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
@@ -186,7 +186,6 @@ class PPOBuffer:
 
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
-        self.device = device
 
     def add(self, state, action, reward, value, logp):
         assert self.ptr < self.max_size
@@ -218,6 +217,51 @@ class PPOBuffer:
         data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
+
+class PPO_mp_Buffer:
+    def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95, cpu=1):
+        self.obs_buf = np.zeros(combined_shape(size, ((cpu,) +  state_dim)), dtype=np.float32)
+        self.act_buf = np.zeros(combined_shape(size, ((cpu,) +  action_dim)), dtype=np.float32)
+        self.rew_buf = np.zeros((size, cpu), dtype=np.float32)
+        self.val_buf = np.zeros((size, cpu), dtype=np.float32)
+        self.adv_buf = np.zeros((size, cpu), dtype=np.float32)
+        self.ret_buf = np.zeros((size, cpu), dtype=np.float32)
+        self.logp_buf = np.zeros((size, cpu), dtype=np.float32)
+
+        self.gamma, self.lam, self.cpu = gamma, lam, cpu
+        self.ptr, self.path_start_idx, self.max_size = 0, np.zeros(self.cpu,dtype=np.int), size
+
+    def add(self, state, action, reward, value, logp):
+        assert self.ptr < self.max_size
+        self.obs_buf[self.ptr] = state
+        self.act_buf[self.ptr] = action
+        self.rew_buf[self.ptr] = reward
+        self.val_buf[self.ptr] = value
+        self.logp_buf[self.ptr] = logp
+        self.ptr += 1
+
+    def finish_path(self, last_val=0, proc_idx=0):
+        assert proc_idx >= 0 and proc_idx < self.cpu
+        path_slice = slice(self.path_start_idx[proc_idx], self.ptr)
+        rews = np.append(self.rew_buf[path_slice][proc_idx], last_val)
+        vals = np.append(self.val_buf[path_slice][proc_idx], last_val)
+
+        deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]  # Td-error
+        self.adv_buf[path_slice][proc_idx] = discount_cumsum(deltas, self.gamma * self.lam)
+        self.ret_buf[path_slice][proc_idx]= discount_cumsum(rews, self.gamma)[:-1]
+
+        self.path_start_idx[proc_idx] = self.ptr
+
+    def get(self):
+        assert self.ptr == self.max_size
+        self.ptr, self.path_start_idx = 0, np.zeros(self.cpu, dtype=np.int)
+
+        adv_mean, adv_std = self.adv_buf.mean(), self.adv_buf.std()
+        self.adv_buf = (self.adv_buf - adv_mean) / adv_std
+
+        data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
+        return {k: torch.as_tensor(v, dtype=torch.float32).view(self.max_size * self.cpu, -1).squeeze() \
+                for k, v in data.items()}
 
 class ObsNormalize():
     def __init__(self, shape, clip=5.0):
