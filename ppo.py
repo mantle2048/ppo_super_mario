@@ -97,7 +97,6 @@ class PPO:
 
     def update(self, buf):
         data = buf.get()
-
         pi_loss_old, pi_info_old = self.compute_loss_pi(data)
         pi_loss_old = pi_loss_old.item()
         v_loss_old = self.compute_loss_v(data)
@@ -170,7 +169,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
-    parser.add_argument('--device', type=str, default='cuda:3')
+    parser.add_argument('--device', type=str, default='cuda:1')
     parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=1)
@@ -196,7 +195,7 @@ if __name__ == '__main__':
 
 
     # Set up logger and save configuration
-    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed, datestamp=False)
+    logger_kwargs = setup_logger_kwargs(f'{args.policy}_{args.env}', args.seed, datestamp=args.datestamp)
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(args)
 

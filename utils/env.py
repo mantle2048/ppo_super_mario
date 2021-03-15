@@ -111,19 +111,19 @@ def worker(env_conn, agent_conn, env_fn):
             env_conn.send((nx_obs, ret, done, info))
 
         elif cmd == 'close':
+            env.close()
             env_conn.close()
             break
+        elif cmd == 'get_spaces':
+            env_conn.send((env.observation_space, env.action_space))
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"`{cmd}` is not implemented in the worker")
 
 class SubprocVecEnv:
     def __init__(self, env_fns):
         self.waiting = False
         self.closed = False
         num_of_envs = len(env_fns)
-        tmp_env = env_fns[0]()
-        self.observation_space = tmp_env.observation_space
-        self.action_space = tmp_env.action_space
 
         self.agent_conns, self.env_conns = \
                 zip(*[mp.Pipe() for _ in range(num_of_envs)])
@@ -139,6 +139,8 @@ class SubprocVecEnv:
 
         for env_conn in self.env_conns:
             env_conn.close()
+        self.agent_conns[0].send(('get_spaces', None))
+        self.observation_space, self.action_space = self.agent_conns[0].recv()
 
     def step_async(self, actions):
         if self.waiting:
@@ -155,7 +157,7 @@ class SubprocVecEnv:
 
         results = [agent_conn.recv() for agent_conn in self.agent_conns]
         obss, rets, dones, infos = zip(*results)
-        return np.stack(obss), np.stack(rets), np.stack(dones), infos
+        return np.stack(obss).squeeze(), np.stack(rets).squeeze(), np.stack(dones).squeeze(), infos
 
     def step(self, actions):
         self.step_async(actions)
@@ -191,8 +193,10 @@ def make_mp_envs(env_id, num_env, seed, start_idx=0):
     def make_env(rank):
         def fn():
             env = gym.make(env_id)
-            env.seed(seed + rank)
-            env.action_space.seed(seed + rank)
+            # env.seed(seed + rank)
+            # env.action_space.seed(seed + rank)
+            env.seed(seed)
+            env.action_space.seed(seed)
             return env
         return fn
     return SubprocVecEnv([make_env(i + start_idx) for i in range(num_env)])

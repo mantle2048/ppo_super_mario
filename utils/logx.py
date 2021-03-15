@@ -237,7 +237,6 @@ class Logger:
         try:
             joblib.dump(state_dict, os.path.join(self.output_dir, fname))
         except:
-            import ipdb; ipdb.set_trace()
             self.log('Warning: could not pickle state_dict.', color='red')
         self._pytorch_simple_save(itr)
 

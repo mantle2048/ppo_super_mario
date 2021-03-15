@@ -220,35 +220,35 @@ class PPOBuffer:
 
 class PPO_mp_Buffer:
     def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95, cpu=1):
-        self.obs_buf = np.zeros(combined_shape(size, ((cpu,) +  state_dim)), dtype=np.float32)
-        self.act_buf = np.zeros(combined_shape(size, ((cpu,) +  action_dim)), dtype=np.float32)
-        self.rew_buf = np.zeros((size, cpu), dtype=np.float32)
-        self.val_buf = np.zeros((size, cpu), dtype=np.float32)
-        self.adv_buf = np.zeros((size, cpu), dtype=np.float32)
-        self.ret_buf = np.zeros((size, cpu), dtype=np.float32)
-        self.logp_buf = np.zeros((size, cpu), dtype=np.float32)
+        self.obs_buf = np.zeros(combined_shape(cpu, ((size,) +  state_dim)), dtype=np.float32)
+        self.act_buf = np.zeros(combined_shape(cpu, ((size,) +  action_dim)), dtype=np.float32)
+        self.rew_buf = np.zeros((cpu, size), dtype=np.float32)
+        self.val_buf = np.zeros((cpu, size), dtype=np.float32)
+        self.adv_buf = np.zeros((cpu, size), dtype=np.float32)
+        self.ret_buf = np.zeros((cpu, size), dtype=np.float32)
+        self.logp_buf = np.zeros((cpu, size), dtype=np.float32)
 
         self.gamma, self.lam, self.cpu = gamma, lam, cpu
         self.ptr, self.path_start_idx, self.max_size = 0, np.zeros(self.cpu,dtype=np.int), size
 
     def add(self, state, action, reward, value, logp):
         assert self.ptr < self.max_size
-        self.obs_buf[self.ptr] = state
-        self.act_buf[self.ptr] = action
-        self.rew_buf[self.ptr] = reward
-        self.val_buf[self.ptr] = value
-        self.logp_buf[self.ptr] = logp
+        self.obs_buf[:, self.ptr] = state
+        self.act_buf[:, self.ptr] = action
+        self.rew_buf[:, self.ptr] = reward
+        self.val_buf[:, self.ptr] = value
+        self.logp_buf[:, self.ptr] = logp
         self.ptr += 1
 
     def finish_path(self, last_val=0, proc_idx=0):
         assert proc_idx >= 0 and proc_idx < self.cpu
         path_slice = slice(self.path_start_idx[proc_idx], self.ptr)
-        rews = np.append(self.rew_buf[path_slice][proc_idx], last_val)
-        vals = np.append(self.val_buf[path_slice][proc_idx], last_val)
+        rews = np.append(self.rew_buf[proc_idx, path_slice], last_val)
+        vals = np.append(self.val_buf[proc_idx, path_slice], last_val)
 
         deltas = rews[:-1] + self.gamma * vals[1:] - vals[:-1]  # Td-error
-        self.adv_buf[path_slice][proc_idx] = discount_cumsum(deltas, self.gamma * self.lam)
-        self.ret_buf[path_slice][proc_idx]= discount_cumsum(rews, self.gamma)[:-1]
+        self.adv_buf[proc_idx, path_slice] = discount_cumsum(deltas, self.gamma * self.lam)
+        self.ret_buf[proc_idx, path_slice]= discount_cumsum(rews, self.gamma)[:-1]
 
         self.path_start_idx[proc_idx] = self.ptr
 

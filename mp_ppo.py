@@ -172,7 +172,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
-    parser.add_argument('--device', type=str, default='cuda:3')
+    parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--datestamp', action='store_true')
@@ -281,18 +281,22 @@ if __name__ == '__main__':
             terminal = done + timeout
             epoch_ended = t == local_steps_per_epoch - 1
 
-            if epoch_ended or terminal.any():
-                for idx in range(args.cpu):
+
+            # 感觉写的太臃肿了，暂时没想到好的写法
+            for idx in range(args.cpu):
+                if epoch_ended or terminal[idx]:
                     if epoch_ended and not terminal[idx]:
-                        print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len} steps', flush=True)
+                        print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len[idx]} steps', flush=True)
 
                     # if trajectory didn't reach terminal state, bootstrap value target
                     if timeout[idx] or epoch_ended:
-                        ter_obs = info[idx]['terminal_observation']
+                        ter_obs = info[idx]['terminal_observation'] if timeout[idx] else obs[idx]
                         _, val, _ = policy.step(ter_obs)
                     else:
                         val = 0
+
                     buf.finish_path(val, idx)
+
                     if terminal[idx]:
                         # only save EpRet / EpLen if trajectory finished
                         logger.store(EpRet=episode_ret[idx], EpLen=episode_len[idx])
@@ -325,5 +329,5 @@ if __name__ == '__main__':
         # Save model
         if (epoch % args.save_freq == 0) or (epoch == args.epochs - 1):
             torch.save(policy.ac.state_dict(), f'./models/{file_name}.pth')
-            # logger.save_state({'env': env}, None)
+            logger.save_state({'env': env}, None)
             # I don't know how to save multi processing env

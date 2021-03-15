@@ -159,7 +159,7 @@ def make_plots(
     condition = 'Condition2' if count else 'Condition1'
     estimator = getattr(np, estimator) # choose what to show on main curve: mean? max? min?
     for value in values:
-        plt.figure(figsize=(12,8))
+        plt.figure(figsize=(12,6))
         plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
         plt.savefig(f'./img/{data[0]["Condition1"][0]}_{value}')
     plt.show()
@@ -171,10 +171,11 @@ def jupyter_make_plot():
     exp_idx = 0
     units = dict()
     kwargs = dict(
-        all_logdirs = ['data/'],
+        # all_logdirs = [ '../data/ppo_HalfCheetah-v3/', '../data/mp_ppo_HalfCheetah-v3/'],
+        all_logdirs = [ '../data/'],
         legend = None,
         xaxis = 'TotalEnvInteracts',
-        values = ['AverageEpRet', 'StdEpRet'],
+        values = ['AverageEpRet', 'AverageVVals', 'LossPi', 'LossV', 'Entropy', 'KL', 'ClipFrac'],
         count = True,
         smooth = 1
     )
@@ -245,5 +246,19 @@ if __name__ == '__main__':
          exclude=args.exclude,
          estimator=args.est
      )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
