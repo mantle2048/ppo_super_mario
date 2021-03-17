@@ -291,3 +291,46 @@ class ObsNormalize():
         self.add(obs)
         obs =  (obs - self.mean) / np.sqrt(self.var)
         return np.clip(obs, -self.clip, self.clip)
+
+    def normalize_without_add(self, obs, idx):
+        obs = np.asarray(obs)
+        obs =  (obs - self.mean[idx]) / np.sqrt(self.var[idx])
+        return np.clip(obs, -self.clip, self.clip)
+
+
+
+class mp_ObsNormalize():
+    def __init__(self, shape, cpu, clip=5.0):
+        self.cpu = cpu
+        assert self.cpu >= 1
+        self.n = 0
+        self.mean = np.zeros(shape)
+        self.mean_diff = np.zeros(shape)
+        self.var = np.zeros(shape)
+        self.clip = clip
+
+    def add(self, obs):
+        '''
+        by math
+        En = En-1 + (xn - En-1) / n
+        Fn = Fn-1 + (xn - En-1) * (xn - En)
+            Fn = n * Var_n | Fn-1 = (n - 1) * Var_n-1
+        So Var_n = (n-1)/n * (xn - En-1)**2 + (n-1)/n * Var_n-1
+        '''
+        self.n += 1
+        old_mean = self.mean.copy()
+        self.mean += (obs - self.mean) / self.n
+        self.mean_diff += (obs - old_mean) * (obs - self.mean)
+        self.var = self.mean_diff/self.n if self.n > self.cpu else np.square(self.mean)
+
+    def normalize(self, obs):
+        assert obs.shape == self.mean.shape, "obs must be the same dim"
+        obs = np.asarray(obs)
+        self.add(obs)
+        obs =  (obs - self.mean) / np.sqrt(self.var)
+        return np.clip(obs, -self.clip, self.clip)
+
+    def normalize_all(self, obs):
+        assert (obs.shape[-1],) == self.mean.shape, "obs must be the same dim"
+        obs = np.asarray(obs)
+        return np.asarray([self.normalize(obs[idx]) for idx in range(self.cpu)])

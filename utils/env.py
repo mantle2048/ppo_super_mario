@@ -157,7 +157,7 @@ class SubprocVecEnv:
 
         results = [agent_conn.recv() for agent_conn in self.agent_conns]
         obss, rets, dones, infos = zip(*results)
-        return np.stack(obss).squeeze(), np.stack(rets).squeeze(), np.stack(dones).squeeze(), infos
+        return np.stack(obss), np.stack(rets), np.stack(dones), infos
 
     def step(self, actions):
         self.step_async(actions)
@@ -166,7 +166,7 @@ class SubprocVecEnv:
     def reset(self):
         for agent_conn in self.agent_conns:
             agent_conn.send(('reset', None))
-        return np.stack([agent_conn.recv() for agent_conn in self.agent_conns]).squeeze()
+        return np.stack([agent_conn.recv()[0] for agent_conn in self.agent_conns])
 
     def sample(self):
         for agent_conn in self.agent_conns:
@@ -193,10 +193,8 @@ def make_mp_envs(env_id, num_env, seed, start_idx=0):
     def make_env(rank):
         def fn():
             env = gym.make(env_id)
-            # env.seed(seed + rank)
-            # env.action_space.seed(seed + rank)
-            env.seed(seed)
-            env.action_space.seed(seed)
+            env.seed(seed + rank)
+            env.action_space.seed(seed + rank)
             return env
         return fn
     return SubprocVecEnv([make_env(i + start_idx) for i in range(num_env)])

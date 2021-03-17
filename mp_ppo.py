@@ -172,7 +172,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
-    parser.add_argument('--device', type=str, default='cuda:0')
+    parser.add_argument('--device', type=str, default='cuda:3')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--datestamp', action='store_true')
@@ -251,8 +251,8 @@ if __name__ == '__main__':
     start_time = time.time()
     obs, done = env.reset(), [False for _ in range(args.cpu)]
     if args.obs_norm:
-        ObsNormal = core.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
-        obs = ObsNormal.normalize(obs)
+        ObsNormal = core.mp_ObsNormalize(obs_dim, args.cpu, args.obs_clip) # Normalize the observation
+        obs = ObsNormal.normalize_all(obs)
     episode_ret = np.zeros(args.cpu, dtype=np.float32)
     episode_len = np.zeros(args.cpu)
 
@@ -263,8 +263,6 @@ if __name__ == '__main__':
             act, val, logp = policy.step(obs)
 
             next_obs, ret, done, info = env.step(act)
-            if args.obs_norm:
-                next_obs = ObsNormal.normalize(next_obs)
             episode_ret += ret
             episode_len += 1
 
@@ -284,23 +282,37 @@ if __name__ == '__main__':
 
             # 感觉写的太臃肿了，暂时没想到好的写法
             for idx in range(args.cpu):
-                if epoch_ended or terminal[idx]:
-                    if epoch_ended and not terminal[idx]:
-                        print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len[idx]} steps', flush=True)
+                # if not terminal[idx] and not epoch_ended:
+                #     continue
 
-                    # if trajectory didn't reach terminal state, bootstrap value target
-                    if timeout[idx] or epoch_ended:
-                        ter_obs = info[idx]['terminal_observation'] if timeout[idx] else obs[idx]
-                        _, val, _ = policy.step(ter_obs)
+                if terminal[idx]:
+                    if timeout[idx]:
+                         ter_obs = info[idx]['terminal_observation']
+                         ter_obs = ObsNormal.normalize(ter_obs)
+                         _, val, _ = policy.step(ter_obs)
                     else:
                         val = 0
-
                     buf.finish_path(val, idx)
+                    logger.store(EpRet=episode_ret[idx], EpLen=episode_len[idx])
 
-                    if terminal[idx]:
-                        # only save EpRet / EpLen if trajectory finished
-                        logger.store(EpRet=episode_ret[idx], EpLen=episode_len[idx])
-                    episode_ret[idx], episode_len[idx] =  0., 0
+                elif epoch_ended:
+                    print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len[idx]} steps', flush=True)
+                    ter_obs = obs[idx]
+                    ter_obs = ObsNormal.normalize(ter_obs)
+                    _, val, _ = policy.step(ter_obs)
+                    buf.finish_path(val, idx)
+                else:
+                     if args.obs_norm:
+                         obs[idx] = ObsNormal.normalize(obs[idx])
+                         continue
+                episode_ret[idx], episode_len[idx] =  0., 0
+
+            # for idx in range(args.cpu):
+            #     if args.obs_norm and not terminal[idx]:
+            #         obs[idx] = ObsNormal.normalize(obs[idx])
+
+        obs = env.reset()
+        # obs = ObsNormal.normalize_all(obs)
 
         policy.update(buf)
 

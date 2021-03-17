@@ -171,8 +171,7 @@ def jupyter_make_plot():
     exp_idx = 0
     units = dict()
     kwargs = dict(
-        # all_logdirs = [ '../data/ppo_HalfCheetah-v3/', '../data/mp_ppo_HalfCheetah-v3/'],
-        all_logdirs = [ '../data/'],
+        all_logdirs = [ '../data/1_cpu_mp_ppo_HalfCheetah-v3_seed_0/', '../data/ppo_HalfCheetah-v3/'],
         legend = None,
         xaxis = 'TotalEnvInteracts',
         values = ['AverageEpRet', 'AverageVVals', 'LossPi', 'LossV', 'Entropy', 'KL', 'ClipFrac'],
@@ -181,7 +180,6 @@ def jupyter_make_plot():
     )
     make_plots(**kwargs)
 # jupyter_make_plot()
-
 
 if __name__ == '__main__':
     import argparse

@@ -169,7 +169,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_v_iters', type=int,default=80)
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
-    parser.add_argument('--device', type=str, default='cuda:1')
+    parser.add_argument('--device', type=str, default='cuda:3')
     parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=1)
@@ -236,7 +236,7 @@ if __name__ == '__main__':
     # Set up model saving
     logger.setup_pytorch_saver(policy.ac.state_dict())
 
-    local_steps_per_epoch = int(args.step_per_epoch / args.cpu)
+    local_steps_per_epoch = int(args.step_per_epoch)
     buf = core.PPOBuffer( #Param
         obs_dim,
         act_dim,
@@ -256,6 +256,7 @@ if __name__ == '__main__':
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(args.epochs):
         for t in range(local_steps_per_epoch):
+            # import ipdb; ipdb.set_trace()
             act, val, logp = policy.step(obs)
 
             next_obs, ret, done, _ = env.step(act)
@@ -287,6 +288,7 @@ if __name__ == '__main__':
                     # only save EpRet / EpLen if trajectory finished
                     logger.store(EpRet=episode_ret, EpLen=episode_len)
                 obs, episode_ret, episode_len = env.reset(), 0, 0
+                # if args.obs_norm: obs = ObsNormal.normalize(obs)
 
         policy.update(buf)
 
