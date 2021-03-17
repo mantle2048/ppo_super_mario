@@ -318,16 +318,19 @@ class mp_ObsNormalize():
         So Var_n = (n-1)/n * (xn - En-1)**2 + (n-1)/n * Var_n-1
         '''
         self.n += 1
-        old_mean = self.mean.copy()
-        self.mean += (obs - self.mean) / self.n
-        self.mean_diff += (obs - old_mean) * (obs - self.mean)
-        self.var = self.mean_diff/self.n if self.n > self.cpu else np.square(self.mean)
+        if self.n == 1:
+            self.mean = obs
+        else:
+            old_mean = self.mean.copy()
+            self.mean += (obs - self.mean) / self.n
+            self.mean_diff += (obs - old_mean) * (obs - self.mean)
+            self.var = self.mean_diff/self.n if self.n > 1 else np.square(self.mean)
 
     def normalize(self, obs):
         assert obs.shape == self.mean.shape, "obs must be the same dim"
         obs = np.asarray(obs)
         self.add(obs)
-        obs =  (obs - self.mean) / np.sqrt(self.var)
+        obs =  (obs - self.mean) / (np.sqrt(self.var) + 1e-8)
         return np.clip(obs, -self.clip, self.clip)
 
     def normalize_all(self, obs):

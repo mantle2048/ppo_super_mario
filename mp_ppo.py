@@ -311,8 +311,9 @@ if __name__ == '__main__':
             #     if args.obs_norm and not terminal[idx]:
             #         obs[idx] = ObsNormal.normalize(obs[idx])
 
-        obs = env.reset()
+        # obs = env.reset()
         # obs = ObsNormal.normalize_all(obs)
+        # During Experiment, I find that reset state with no Normalize will perform better
 
         policy.update(buf)
 
