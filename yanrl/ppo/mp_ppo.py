@@ -6,11 +6,14 @@ import time
 import argparse
 import torch
 import torch.nn.functional as F
+import torch.multiprocessing as mp
 import numpy as np
-
 import gym
-import core.ppo_core as core
-from utils.logx import EpochLogger, setup_logger_kwargs
+
+import yanrl.utils.core as core
+from yanrl.utils.logx import EpochLogger, setup_logger_kwargs
+from yanrl.utils.env import make_mp_envs
+from yanrl.user_config import DEFAULT_MODEL_DIR
 
 os.environ['CUDA_VISBLE_DEVICES'] = '1'
 
@@ -32,7 +35,8 @@ class PPO:
         max_grad_norm=None,
         use_clipped_value_loss=True,
         clip_val_param = 80.0,
-        device='cuda'
+        device='cuda',
+        logger=None
     ):
         # Create actor-critic module
         self.gamma = gamma
@@ -51,6 +55,7 @@ class PPO:
         self.ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs).to(self.device)
         self.pi_optim = torch.optim.Adam(self.ac.pi.parameters(), lr=self.pi_lr)
         self.v_optim = torch.optim.Adam(self.ac.v.parameters(), lr=self.vf_lr)
+        self.logger = logger
 
 
     def step(self, obs):
@@ -97,6 +102,7 @@ class PPO:
 
     def update(self, buf):
         data = buf.get()
+
         pi_loss_old, pi_info_old = self.compute_loss_pi(data)
         pi_loss_old = pi_loss_old.item()
         v_loss_old = self.compute_loss_v(data)
@@ -107,11 +113,11 @@ class PPO:
             loss_pi, pi_info = self.compute_loss_pi(data)
             kl = pi_info['kl']
             if kl > 1.5 * self.target_kl:
-                logger.log(f'Early stopping at step {i} due to reaching max kl.')
+                self.logger.log(f'Early stopping at step {i} due to reaching max kl.')
                 break
             loss_pi.backward()
             self.pi_optim.step()
-        logger.store(StopIter=i)
+        self.logger.store(StopIter=i)
 
         for i in range(self.train_v_iters):
             self.v_optim.zero_grad()
@@ -121,7 +127,7 @@ class PPO:
 
         # Log changes from update
         kl, entropy, clipfrac = pi_info['kl'], pi_info_old['ent'], pi_info['cf']
-        logger.store(
+        self.logger.store(
             LossPi=pi_loss_old,
             LossV=v_loss_old,
             KL=kl,
@@ -157,7 +163,7 @@ def eval_policy(policy, env_name, seed, eval_episodes=10):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--policy', type=str, default='ppo')
+    parser.add_argument('--policy', type=str, default='mp_ppo')
     parser.add_argument('--env', type=str, default='HalfCheetah-v3')
     parser.add_argument('--hidden', type=int, default=64)
     parser.add_argument('--layers_len', type=int, default=2)
@@ -170,9 +176,9 @@ if __name__ == '__main__':
     parser.add_argument('--lam', type=float,default=0.97)
     parser.add_argument('--target_kl', type=float, default=0.01)
     parser.add_argument('--device', type=str, default='cuda:3')
-    parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--seed', '-s', type=int, default=0)
-    parser.add_argument('--cpu', type=int, default=1)
+    parser.add_argument('--cpu', type=int, default=4)
+    parser.add_argument('--datestamp', action='store_true')
     parser.add_argument('--step_per_epoch', type=int, default=4000)
     parser.add_argument('--max_episode_len', type=int, default=1000)
     parser.add_argument('--epochs', type=int, default=250)
@@ -190,8 +196,8 @@ if __name__ == '__main__':
     print('-----' * 8)
 
 
-    if not os.path.exists('./models'):
-        os.makedirs('./models')
+    if not os.path.exists(DEFAULT_MODEL_DIR):
+        os.makedirs(DEFAULT_MODEL_DIR)
 
 
     # Set up logger and save configuration
@@ -200,15 +206,13 @@ if __name__ == '__main__':
     logger.save_config(args)
 
     # Init Envirorment
-    env = gym.make(args.env)
+    env = make_mp_envs(args.env, args.cpu, args.seed)
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
 
     # Set seeds
-    env.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-    env.action_space.seed(args.seed)
 
     kwargs = {
         "env": env,
@@ -224,10 +228,12 @@ if __name__ == '__main__':
         "target_kl": args.target_kl,
         "use_clipped_value_loss": args.use_clipped_value_loss,
         "clip_val_param": args.clip_val_param,
-        "device": args.device
+        "device": args.device,
+        "logger": logger
     }
 
     policy = PPO(**kwargs)
+    policy.ac.share_memory()
 
     # Count variables
     var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
@@ -236,32 +242,33 @@ if __name__ == '__main__':
     # Set up model saving
     logger.setup_pytorch_saver(policy.ac.state_dict())
 
-    local_steps_per_epoch = int(args.step_per_epoch)
-    buf = core.PPOBuffer( #Param
+    local_steps_per_epoch = int(args.step_per_epoch / args.cpu)
+    buf = core.PPO_mp_Buffer(
         obs_dim,
         act_dim,
         local_steps_per_epoch,
         args.gamma,
-        args.lam
+        args.lam,
+        args.cpu
     )
     # Prepare for interaction with environment
     start_time = time.time()
-    obs, done = env.reset(), False
+    obs, done = env.reset(), [False for _ in range(args.cpu)]
     if args.obs_norm:
-        ObsNormal = core.ObsNormalize(obs.shape, args.obs_clip) # Normalize the observation
-        obs = ObsNormal.normalize(obs)
-    episode_ret = 0.
-    episode_len = 0.
+        ObsNormal = core.ObsNormalize(obs_dim, args.cpu, args.obs_clip) # Normalize the observation
+        obs = ObsNormal.normalize_all(obs)
+    episode_ret = np.zeros(args.cpu, dtype=np.float32)
+    episode_len = np.zeros(args.cpu)
+
 
     # Main loop: collect experience in env and update/log each epoch
     for epoch in range(args.epochs):
         for t in range(local_steps_per_epoch):
-            # import ipdb; ipdb.set_trace()
             act, val, logp = policy.step(obs)
 
-            next_obs, ret, done, _ = env.step(act)
+            next_obs, ret, done, info = env.step(act)
             if args.obs_norm:
-                next_obs = ObsNormal.normalize(next_obs)
+                next_obs = ObsNormal.normalize_all(next_obs)
             episode_ret += ret
             episode_len += 1
 
@@ -271,24 +278,35 @@ if __name__ == '__main__':
 
             # Update obs (critical!)
             obs = next_obs
+            # In multiprocess env when a episode is terminal it will automatic reset and 
+            # the next_obs is the obs after reset,the real obs that cause terminal is stored in info['terminal_observation'] | updata: automatic reset has been removed
 
             timeout = episode_len == args.max_episode_len
-            terminal = done or timeout
+            terminal = done + timeout
             epoch_ended = t == local_steps_per_epoch - 1
-            if epoch_ended or terminal:
-                if epoch_ended and not terminal:
-                    print(f'Warning: Trajectory cut off by epoch at {episode_len} steps', flush=True)
-                # if trajectory didn't reach terminal state, bootstrap value target
-                if timeout or epoch_ended:
-                    _, val, _ = policy.step(obs)
-                else:
-                    val = 0
-                buf.finish_path(val)
-                if terminal:
-                    # only save EpRet / EpLen if trajectory finished
-                    logger.store(EpRet=episode_ret, EpLen=episode_len)
-                obs, episode_ret, episode_len = env.reset(), 0, 0
-                # if args.obs_norm: obs = ObsNormal.normalize(obs)
+
+
+            # 感觉写的太臃肿了，暂时没想到好的写法
+
+            for idx in range(args.cpu):
+                if epoch_ended or terminal[idx]:
+                    if epoch_ended and not terminal[idx]:
+                        print(f'Warning: Trajectory {idx} cut off by epoch at {episode_len[idx]} steps', flush=True)
+                    # if trajectory didn't reach terminal state, bootstrap value target
+                    if timeout[idx] or epoch_ended:
+                        _, val, _ = policy.step(obs[idx])
+                    else:
+                        val = 0
+                    buf.finish_path(val, idx)
+                    if terminal[idx]:
+                        # only save EpRet / EpLen if trajectory finished
+                        logger.store(EpRet=episode_ret[idx], EpLen=episode_len[idx])
+                    obs[idx], episode_ret[idx], episode_len[idx] = env.reset_one(idx), 0, 0
+                    # if args.obs_norm: obs = ObsNormal.normalize(obs)
+
+        # obs = env.reset()
+        # obs = ObsNormal.normalize_all(obs)
+        # During Experiment, I find that reset state without Normalize will perform better
 
         policy.update(buf)
 
@@ -316,5 +334,6 @@ if __name__ == '__main__':
 
         # Save model
         if (epoch % args.save_freq == 0) or (epoch == args.epochs - 1):
-            torch.save(policy.ac.state_dict(), f'./models/{file_name}.pth')
-            logger.save_state({'env': env}, None)
+            torch.save(policy.ac.state_dict(), f'{DEFAULT_MODEL_DIR}/{file_name}.pth')
+            logger.save_state(dict(obs_normal=ObsNormal if args.obs_norm else None), None)
+            # I don't know how to save multi processing env so only save obsnormal

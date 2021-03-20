@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import json
 import matplotlib.pyplot as plt
+from yanrl.user_config import DEFAULT_IMG_DIR, DEFAULT_DATA_DIR
 
 DIV_LINE_WIDTH = 50
 
@@ -153,7 +154,8 @@ def make_plots(
         exclude=None,
         estimator='mean'
     ):
-    os.makedirs('./img', exist_ok=True)
+    img_path = DEFAULT_IMG_DIR
+    os.makedirs(img_path, exist_ok=True)
     data = get_all_datasets(all_logdirs, legend, select, exclude)
     values = values if isinstance(values, list) else [values]
     condition = 'Condition2' if count else 'Condition1'
@@ -161,7 +163,7 @@ def make_plots(
     for value in values:
         plt.figure(figsize=(12,6))
         plot_data(data, xaxis=xaxis, value=value, condition=condition, smooth=smooth, estimator=estimator)
-        plt.savefig(f'./img/{data[0]["Condition1"][0]}_{value}')
+        plt.savefig(f'{DEFAULT_IMG_DIR}/{data[0]["Condition1"][0]}_{value}')
     plt.show()
 
 def jupyter_make_plot():
@@ -171,7 +173,7 @@ def jupyter_make_plot():
     exp_idx = 0
     units = dict()
     kwargs = dict(
-        all_logdirs = [ '../data/1_cpu_mp_ppo_HalfCheetah-v3_seed_0/', '../data/ppo_HalfCheetah-v3/'],
+        all_logdirs = [ os.path.join(DEFAULT_DATA_DIR, 'ppo-HalfCheetah-v3/')]
         legend = None,
         xaxis = 'TotalEnvInteracts',
         values = ['AverageEpRet', 'AverageVVals', 'LossPi', 'LossV', 'Entropy', 'KL', 'ClipFrac'],
@@ -181,7 +183,7 @@ def jupyter_make_plot():
     make_plots(**kwargs)
 # jupyter_make_plot()
 
-if __name__ == '__main__':
+def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--logdir',default=['data/ppo_HalfCheetah-v3/'], nargs='*')
@@ -245,18 +247,5 @@ if __name__ == '__main__':
          estimator=args.est
      )
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+if __name__ == '__main__':
+    main()

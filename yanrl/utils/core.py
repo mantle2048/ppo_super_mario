@@ -42,6 +42,13 @@ def mlp(sizes, activation, output_activation=nn.Identity):
         layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
     return nn.Sequential(*layers)
 
+def cnn(channels, activation, output_activation=nn.Identity):
+    layers = []
+    for j in range(len(channels)-1):
+        act = activation if j < len(channels)-2 else output_activation
+        layers += [nn.Conv2d(channels[j], channels[j+1], 3, stride=2,padding=1), act()]
+    return nn.Sequential(*layers)
+
 class Actor(nn.Module):
 
     def _distribution(self, obs):
@@ -74,7 +81,6 @@ class MLPCategoricalActor(Actor):
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act)
-
 
 
 class MLPGaussianActor(Actor):
@@ -263,7 +269,7 @@ class PPO_mp_Buffer:
         return {k: torch.as_tensor(v, dtype=torch.float32).view(self.max_size * self.cpu, -1).squeeze() \
                 for k, v in data.items()}
 
-class ObsNormalize():
+class dropped_ObsNormalize():
     def __init__(self, shape, clip=5.0):
         self.n = 0
         self.mean = np.zeros(shape)
@@ -299,8 +305,8 @@ class ObsNormalize():
 
 
 
-class mp_ObsNormalize():
-    def __init__(self, shape, cpu, clip=5.0):
+class ObsNormalize():
+    def __init__(self, shape, cpu=1, clip=5.0):
         self.cpu = cpu
         assert self.cpu >= 1
         self.n = 0
@@ -326,14 +332,17 @@ class mp_ObsNormalize():
             self.mean_diff += (obs - old_mean) * (obs - self.mean)
             self.var = self.mean_diff/self.n if self.n > 1 else np.square(self.mean)
 
-    def normalize(self, obs):
+    def normalize(self, obs, update=True):
+        ''' for single obs '''
         assert obs.shape == self.mean.shape, "obs must be the same dim"
         obs = np.asarray(obs)
-        self.add(obs)
+        if update:
+            self.add(obs)
         obs =  (obs - self.mean) / (np.sqrt(self.var) + 1e-8)
         return np.clip(obs, -self.clip, self.clip)
 
-    def normalize_all(self, obs):
+    def normalize_all(self, obs, update=True):
+        ''' for multi obss '''
         assert (obs.shape[-1],) == self.mean.shape, "obs must be the same dim"
         obs = np.asarray(obs)
         return np.asarray([self.normalize(obs[idx]) for idx in range(self.cpu)])

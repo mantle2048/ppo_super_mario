@@ -2,6 +2,6 @@ __pycache__/
 tags
 .ipynb_checkpoints/
 data/
-models/
-results/
+model/
 img/
+video/

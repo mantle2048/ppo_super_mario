@@ -94,7 +94,7 @@ def worker(env_conn, agent_conn, env_fn):
             nx_obs, ret, done, info = env.step(action)
             if done:
                 info['terminal_observation'] = nx_obs
-                nx_obs = env.reset()
+                # nx_obs = env.reset()
             env_conn.send((nx_obs, ret, done, info))
 
         elif cmd == 'reset':
@@ -167,6 +167,10 @@ class SubprocVecEnv:
         for agent_conn in self.agent_conns:
             agent_conn.send(('reset', None))
         return np.stack([agent_conn.recv()[0] for agent_conn in self.agent_conns])
+
+    def reset_one(self, idx):
+        self.agent_conns[idx].send(('reset', None))
+        return np.asarray(self.agent_conns[idx].recv()[0])
 
     def sample(self):
         for agent_conn in self.agent_conns:
