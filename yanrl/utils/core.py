@@ -19,6 +19,12 @@ def combined_shape(length, shape=None):
 def count_vars(module):
     return sum([np.prod(p.shape) for p in module.parameters()])
 
+def count_cnn_output(sizes, channel, kernel_size, stride, padding, depth):
+    sizes = np.asarray(sizes)
+    for _ in range(depth):
+        sizes = (sizes + 2 * padding - kernel_size) // 2 + 1
+    return np.prod(sizes) * channel
+
 def discount_cumsum(x, discount):
     """
     magic from rllab for computing discounted cumulative sums of vectors.
@@ -42,12 +48,14 @@ def mlp(sizes, activation, output_activation=nn.Identity):
         layers += [nn.Linear(sizes[j], sizes[j+1]), act()]
     return nn.Sequential(*layers)
 
-def cnn(channels, activation, output_activation=nn.Identity):
+def cnn(channels, kernel_size, stride, padding,  activation):
     layers = []
     for j in range(len(channels)-1):
-        act = activation if j < len(channels)-2 else output_activation
-        layers += [nn.Conv2d(channels[j], channels[j+1], 3, stride=2,padding=1), act()]
-    return nn.Sequential(*layers)
+        # act = activation if j < len(channels)-2 else output_activation
+        layers += [nn.Conv2d(channels[j], channels[j+1], kernel_size, stride, padding), activation()]
+    return layers
+    # return nn.Sequential(*layers)
+
 
 class Actor(nn.Module):
 
@@ -103,7 +111,6 @@ class MLPGaussianActor(Actor):
         return pi.log_prob(act).sum(dim=-1)  # Last axis sum needed for Torch Normal distribution
 
 
-
 class MLPCritic(nn.Module):
 
     def __init__(self, obs_dim, hidden_sizes, activation=nn.Tanh):
@@ -112,6 +119,7 @@ class MLPCritic(nn.Module):
 
     def forward(self, obs):
         return torch.squeeze(self.v_net(obs), dim=-1)  # Critical to ensure v has right shape
+
 
 class MLPActorCritic(nn.Module):
 
@@ -138,6 +146,137 @@ class MLPActorCritic(nn.Module):
             v = self.v(obs)
         return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
 
+    def forward(self):
+        raise NotImplementedError
+
+
+
+
+class CNNGaussianActorCritic(nn.Module):
+    def __init__(self, obs_dim, act_dim, cnn_kwargs):
+        # obs_dim means img_size after flatten
+        super().__init__()
+        self.conv = cnn(**cnn_kwargs)
+        self.linear_net = nn.Linear(obs_dim, obs_dim//2)
+        self.mu_net = nn.Sequential(
+            *self.conv,
+            nn.Flatten(),
+            self.linear_net,
+            nn.Linear(obs_dim//2, act_dim)
+        )
+        self.v_net = nn.Sequential(
+            *self.conv,
+            nn.Flatten(),
+            self.linear_net,
+            nn.Linear(obs_dim//2, 1)
+        )
+
+        log_std = -0.5 * np.ones(act_dim, dtype=np.float32)
+        self.log_std = nn.Parameter(torch.as_tensor(log_std))
+        self.register_parameter('log_std', self.log_std)
+
+    def _distribution(self, obs):
+        mu = self.mu_net(obs).cpu()
+        std = torch.exp(self.log_std).cpu()
+        return Normal(mu, std)
+
+    def _log_prob_from_distribution(self, pi, act):
+        return pi.log_prob(act).sum(dim=-1)
+
+    def _pi(self, obs, act=None):
+        # If act is None means use v_net to generate Vvalues
+        # else mean use mu_net to generate pi and log_p
+
+        pi = self._distribution(obs)
+        logp_a = None
+        if act is not None:
+            act = act.cpu()
+            logp_a = self._log_prob_from_distribution(pi, act)
+        return pi, logp_a
+
+    def _v(self, obs):
+        return torch.squeeze(self.v_net(obs), dim=-1)
+
+
+class CNNCategoricalActorCritic(nn.Module):
+    def __init__(self, obs_dim, act_dim, cnn_kwargs):
+        # obs_dim means img_size after flatten
+        super().__init__()
+        self.conv = cnn(**cnn_kwargs)
+        # self.linear_net = nn.Linear(obs_dim, obs_dim//2)
+        self.linear_net = list(mlp([obs_dim, obs_dim//2], nn.Identity))
+        self.logits_net = nn.Sequential(
+            *self.conv,
+            nn.Flatten(),
+            *self.linear_net,
+            nn.Linear(obs_dim//2, act_dim)
+        )
+        self.v_net = nn.Sequential(
+            *self.conv,
+            nn.Flatten(),
+            *self.linear_net,
+            nn.Linear(obs_dim//2, 1)
+        )
+
+    def _distribution(self, obs):
+        logits = self.logits_net(obs).cpu()
+        return Categorical(logits=logits)
+
+    def _log_prob_from_distribution(self, pi, act):
+        return pi.log_prob(act)
+
+    def _pi(self, obs, act=None):
+        # If act is None means use v_net to generate Vvalues
+        # else mean use mu_net to generate pi and log_p
+
+        pi = self._distribution(obs)
+        logp_a = None
+        if act is not None:
+            act = act.cpu()
+            logp_a = self._log_prob_from_distribution(pi, act)
+        return pi, logp_a
+
+    def _v(self, obs):
+        return torch.squeeze(self.v_net(obs), dim=-1)
+
+
+class CNNActorCritic(nn.Module):
+
+    def __init__(self, observation_space, action_space, hidden_sizes=None, activation=nn.ReLU):
+        # hidden_sizes is not used, just for api consistent
+        super().__init__()
+
+        hight, width, input_channel = observation_space.shape
+        channel = 32
+        channels, kernel_size, stride, padding = [input_channel] + [channel] * 4, 3, 2, 1
+        obs_dim = count_cnn_output((hight, width), channel, kernel_size, stride, padding, len(channels)-1)
+
+        cnn_kwargs = dict(
+            channels=channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            activation=activation
+        )
+
+        if isinstance(action_space, Box):
+            self.net = CNNGaussianActorCritic(obs_dim, action_space.shape[0], cnn_kwargs)
+        elif isinstance(action_space, Discrete):
+            self.net = CNNCategoricalActorCritic(obs_dim, action_space.n, cnn_kwargs)
+
+    def pi(self, obs, act=None):
+        return self.net._pi(obs, act)
+
+    def v(self, obs):
+        return self.net._v(obs)
+
+    def _step(self, obs):
+        with torch.no_grad():
+            dist = self.net._distribution(obs)
+            a = dist.sample()
+            logp_a = self.net._log_prob_from_distribution(dist, a)
+            v = self.net._v(obs)
+        return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
     def forward(self):
         raise NotImplementedError
 
@@ -220,7 +359,7 @@ class PPOBuffer:
         adv_mean, adv_std = self.adv_buf.mean(), self.adv_buf.std()
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
 
-        data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
+        data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
 
@@ -265,8 +404,8 @@ class PPO_mp_Buffer:
         adv_mean, adv_std = self.adv_buf.mean(), self.adv_buf.std()
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
 
-        data = dict(obs = self.obs_buf, act = self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
-        return {k: torch.as_tensor(v, dtype=torch.float32).view(self.max_size * self.cpu, -1).squeeze() \
+        data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
+        return {k: torch.as_tensor(v, dtype=torch.float32).view(self.max_size * self.cpu, -1).squeeze()
                 for k, v in data.items()}
 
 class dropped_ObsNormalize():
@@ -295,14 +434,13 @@ class dropped_ObsNormalize():
     def normalize(self, obs):
         obs = np.asarray(obs)
         self.add(obs)
-        obs =  (obs - self.mean) / np.sqrt(self.var)
+        obs = (obs - self.mean) / np.sqrt(self.var)
         return np.clip(obs, -self.clip, self.clip)
 
     def normalize_without_add(self, obs, idx):
         obs = np.asarray(obs)
-        obs =  (obs - self.mean[idx]) / np.sqrt(self.var[idx])
+        obs = (obs - self.mean[idx]) / np.sqrt(self.var[idx])
         return np.clip(obs, -self.clip, self.clip)
-
 
 
 class ObsNormalize():
@@ -338,11 +476,11 @@ class ObsNormalize():
         obs = np.asarray(obs)
         if update:
             self.add(obs)
-        obs =  (obs - self.mean) / (np.sqrt(self.var) + 1e-8)
+        obs = (obs - self.mean) / (np.sqrt(self.var) + 1e-8)
         return np.clip(obs, -self.clip, self.clip)
 
     def normalize_all(self, obs, update=True):
         ''' for multi obss '''
         assert (obs.shape[-1],) == self.mean.shape, "obs must be the same dim"
         obs = np.asarray(obs)
-        return np.asarray([self.normalize(obs[idx]) for idx in range(self.cpu)])
+        return np.asarray([self.normalize(obs[idx], update) for idx in range(self.cpu)])
