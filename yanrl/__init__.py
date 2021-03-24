@@ -1,5 +1,5 @@
 from yanrl.ppo.ppo import PPO as PPO
-from yanrl.ppo.mp_ppo import PPO as mp_PPO
+from yanrl.ppo.ppo import PPO2 as PPO2
 from yanrl.utils.logx import Logger, EpochLogger
 import sys
 import os

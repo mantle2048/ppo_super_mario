@@ -9,6 +9,8 @@ DEFAULT_DATA_DIR = os.path.join(os.path.abspath(dirname(dirname(__file__))),'dat
 DEFAULT_IMG_DIR =  os.path.join(os.path.abspath(dirname(dirname(__file__))), 'img')
 
 DEFAULT_MODEL_DIR =  os.path.join(os.path.abspath(dirname(dirname(__file__))), 'model')
+
+DEFAULT_VIDEO_DIR =  os.path.join(os.path.abspath(dirname(dirname(__file__))), 'video')
 # Whether to automatically insert a date and time stamp into the names of
 # save directories:
 FORCE_DATESTAMP = False

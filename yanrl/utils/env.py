@@ -7,6 +7,14 @@ from gym.spaces import Box, Discrete
 import pickle
 import cloudpickle
 
+import gym_super_mario_bros
+from gym import Wrapper
+from nes_py.wrappers import JoypadSpace
+from gym_super_mario_bros.actions import SIMPLE_MOVEMENT,  COMPLEX_MOVEMENT, RIGHT_ONLY
+from yanrl.utils.wrappers import ReshapeReward, SkipObs, SingleEnv
+
+actions = SIMPLE_MOVEMENT # Mark the mario action_type
+
 class NotSteppingError(Exception):
     """
     Raised when an asynchronous step is not running but
@@ -116,6 +124,10 @@ def worker(env_conn, agent_conn, env_fn):
             break
         elif cmd == 'get_spaces':
             env_conn.send((env.observation_space, env.action_space))
+
+        elif cmd == 'seed':
+            env.action_space.seed(data)
+            env_conn.send(env.seed(data))
         else:
             raise NotImplementedError(f"`{cmd}` is not implemented in the worker")
 
@@ -157,20 +169,25 @@ class SubprocVecEnv:
 
         results = [agent_conn.recv() for agent_conn in self.agent_conns]
         obss, rets, dones, infos = zip(*results)
-        return np.stack(obss), np.stack(rets), np.stack(dones), infos
+        return np.concatenate(obss), np.concatenate(rets), np.concatenate(dones), infos
 
     def step(self, actions):
         self.step_async(actions)
         return self.step_wait()
 
-    def reset(self):
-        for agent_conn in self.agent_conns:
-            agent_conn.send(('reset', None))
-        return np.stack([agent_conn.recv()[0] for agent_conn in self.agent_conns])
+    def reset(self, idx=None):
+        if idx is None:
+            for agent_conn in self.agent_conns:
+                agent_conn.send(('reset', None))
+            return np.concatenate([agent_conn.recv()[0] for agent_conn in self.agent_conns])
+        else:
+            self.agent_conns[idx].send(('reset', None))
+            return np.asarray(self.agent_conns[idx].recv()[0])
 
-    def reset_one(self, idx):
-        self.agent_conns[idx].send(('reset', None))
-        return np.asarray(self.agent_conns[idx].recv()[0])
+    def seed(self):
+        for idx, agent_conn in enumerate(self.agent_conns):
+            agent_conn.send(("seed", seed + idx))
+        return [agent_conn.recv() for agent_conn in self.agent_conns]
 
     def sample(self):
         for agent_conn in self.agent_conns:
@@ -178,7 +195,7 @@ class SubprocVecEnv:
 
         results = [agent_conn.recv() for agent_conn in self.agent_conns]
         obss, rets, dones, infos = zip(*results)
-        return np.stack(obss), np.stack(rets), np.stack(dones), infos
+        return np.concatenate(obss), np.concatenate(rets), np.concatenate(dones), infos
 
     def close(self):
         if self.closed:
@@ -197,10 +214,16 @@ def make_mp_envs(env_id, num_env, seed, start_idx=0):
     def make_env(rank):
         def fn():
             env = gym.make(env_id)
+            if 'SuperMarioBros' in env_id:
+                env = JoypadSpace(env, actions)
+                env = ReshapeReward(env, monitor=None)
+                env = SkipObs(env)
+            env = SingleEnv(env)
             env.seed(seed + rank)
             env.action_space.seed(seed + rank)
             return env
         return fn
+    if num_env == 1: return make_env(0)()
     return SubprocVecEnv([make_env(i + start_idx) for i in range(num_env)])
 
 if __name__ == '__main__':
