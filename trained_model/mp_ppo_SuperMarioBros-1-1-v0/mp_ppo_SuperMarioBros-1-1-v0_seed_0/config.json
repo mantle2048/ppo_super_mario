@@ -1,0 +1,31 @@
+{
+    "args":	{
+        "clip_ratio":	0.2,
+        "clip_val_param":	80.0,
+        "cpu":	4,
+        "datestamp":	false,
+        "device":	"cuda:2",
+        "env":	"SuperMarioBros-1-1-v0",
+        "epochs":	250,
+        "gamma":	0.9,
+        "hidden":	64,
+        "lam":	0.97,
+        "layers_len":	2,
+        "max_episode_len":	1000,
+        "max_timesteps":	1000000.0,
+        "obs_clip":	5.0,
+        "obs_norm":	true,
+        "pi_lr":	0.0003,
+        "policy":	"mp_ppo",
+        "policy_type":	"cnn",
+        "save_freq":	10,
+        "seed":	0,
+        "step_per_epoch":	4000,
+        "target_kl":	0.01,
+        "train_pi_iters":	80,
+        "train_v_iters":	80,
+        "use_clipped_value_loss":	false,
+        "vf_lr":	0.001
+    },
+    "exp_name":	"mp_ppo_SuperMarioBros-1-1-v0"
+}

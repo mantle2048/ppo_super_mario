@@ -93,7 +93,7 @@ def train():
     # policy.ac.share_memory()
 
     # Count variables
-    if args.cpu == 1:
+    if args.policy_type == 'mlp':
         var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
         logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
     else:

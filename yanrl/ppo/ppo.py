@@ -218,6 +218,7 @@ class PPO2:
             v_loss = torch.max(v_loss, v_loss_clipped).mean()
             return v_loss
         else:
+            # Try another value loss
             return F.mse_loss(self.ac.v(obs), ret)
 
     def update(self, buf):
@@ -232,7 +233,8 @@ class PPO2:
             self.optim.zero_grad()
             loss_pi, pi_info = self.compute_loss_pi(data)
             loss_v = self.compute_loss_v(data)
-            total_loss = loss_pi + 0.5 * loss_v - 0.01 * pi_info_old['ent']
+            # total_loss = loss_pi + 0.5 * loss_v - 0.01 * pi_info_old['ent']
+            total_loss = loss_pi + 0.5 * loss_v
             kl = pi_info['kl']
             if kl > 1.5 * self.target_kl:
                 self.logger.log(f'Early stopping at step {i} due to reaching max kl.')
@@ -406,7 +408,6 @@ def ppo():
                 buf.finish_path(val)
                 if terminal:
                     # only save EpRet / EpLen if trajectory finished
-                    # import ipdb;ipdb.set_trace()
                     logger.store(EpRet=episode_ret, EpLen=episode_len)
                 obs, episode_ret, episode_len = env.reset(), 0, 0
                 # if args.obs_norm: obs = ObsNormal.normalize(obs)
