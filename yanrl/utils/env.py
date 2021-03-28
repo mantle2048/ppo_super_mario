@@ -210,7 +210,7 @@ class SubprocVecEnv:
         self.closed = True
 
 
-def make_mp_envs(env_id, num_env, seed, start_idx=0):
+def make_envs(env_id, num_env, seed, start_idx=0):
     def make_env(rank):
         def fn():
             env = gym.make(env_id)

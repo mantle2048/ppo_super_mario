@@ -10,7 +10,7 @@ import gym_super_mario_bros
 from yanrl import PPO as PPO
 from yanrl import PPO2 as PPO2
 from yanrl import Logger, EpochLogger
-from yanrl.utils.env import make_mp_envs
+from yanrl.utils.env import make_envs
 from yanrl.utils.logx import setup_logger_kwargs
 import yanrl.utils.core as core
 from yanrl.user_config import DEFAULT_MODEL_DIR
@@ -35,7 +35,7 @@ def train():
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--datestamp', action='store_true')
-    parser.add_argument('--step_per_epoch', type=int, default=4000)
+    parser.add_argument('--steps_per_epoch', type=int, default=4000)
     parser.add_argument('--max_episode_len', type=int, default=1000)
     parser.add_argument('--epochs', type=int, default=250)
     parser.add_argument('--max_timesteps', type=int, default=1e6)
@@ -63,7 +63,7 @@ def train():
     logger.save_config(args)
 
     # Init Envirorment
-    env = make_mp_envs(args.env, args.cpu, args.seed) # SingleEnv Wrapper and env.seed env.action_space seed
+    env = make_envs(args.env, args.cpu, args.seed) # SingleEnv Wrapper and env.seed env.action_space seed
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape if  isinstance(env.action_space, gym.spaces.Box) else (1, )
 
@@ -104,7 +104,7 @@ def train():
     # Set up model saving
     logger.setup_pytorch_saver(policy.ac.state_dict())
 
-    local_steps_per_epoch = int(args.step_per_epoch / args.cpu)
+    local_steps_per_epoch = int(args.steps_per_epoch / args.cpu)
     if args.cpu == 0:
         buf = core.PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam)
     else:
@@ -172,7 +172,7 @@ def train():
         logger.log_tabular('EpRet', with_min_and_max=True)
         logger.log_tabular('EpLen', average_only=True)
         logger.log_tabular('VVals', with_min_and_max=True)
-        logger.log_tabular('TotalEnvInteracts', (epoch+1)*args.step_per_epoch)
+        logger.log_tabular('TotalEnvInteracts', (epoch+1)*args.steps_per_epoch)
         logger.log_tabular('LossPi', average_only=True)
         logger.log_tabular('LossV', average_only=True)
         logger.log_tabular('DeltaLossPi', average_only=True)

@@ -31,7 +31,7 @@ class TD3:
         self.obs_dim = env.observation_space
         self.act_dim = env.action_space.shape[0]
         # Action limit for clamping: critically, assumes all dimensions share the same bound!
-        self.max_action = env.actoin_space.high[0]
+        self.max_action = env.action_space.high[0]
         self.gamma = gamma
         self.batch_size = batch_size
         self.tau = tau
@@ -85,8 +85,8 @@ class TD3:
 
         # Useful info for logging
         loss_info = dict(
-            Q1Vals=q1.detach().numpy(),
-            Q2Vals=q2.detach().numpy()
+            Q1Vals=q1.cpu().detach().numpy(),
+            Q2Vals=q2.cpu().detach().numpy()
         )
 
         return loss_q, loss_info

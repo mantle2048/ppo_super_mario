@@ -5,3 +5,5 @@ data/
 model/
 img/
 video/
+output_video/
+trained_model/

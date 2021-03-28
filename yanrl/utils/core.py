@@ -150,6 +150,46 @@ class MLPActorCritic(nn.Module):
         raise NotImplementedError
 
 
+class MLPDetActor(nn.Module):
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, max_action):
+        nn.Module.__init__(self)
+        pi_sizes = [obs_dim] + list(hidden_sizes) + [act_dim]
+        self.pi = mlp(pi_sizes, activation, nn.Tanh)
+        self.max_action = max_action
+
+    def forward(self, obs):
+        # Return output from network scaled to action space limits
+        return self.max_action * self.pi(obs)
+
+class MLPQFunction(nn.Module):
+
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        nn.Module.__init__(self)
+        q_sizes = [obs_dim + act_dim] + list(hidden_sizes) + [1]
+        self.q = mlp(q_sizes, activation)
+
+    def forward(self, obs, act):
+        q = self.q(torch.cat([obs, act], dim=-1))
+        return torch.squeeze(q, -1)  # Critical to ensure q has right shape
+
+class MLPDetActorCritic(nn.Module):
+
+    def __init__(self, observation_space, action_space, hidden_sizes=(256, 256), activation=nn.ReLU):
+        nn.Module.__init__(self)
+
+        obs_dim = observation_space.shape[0]
+        act_dim = action_space.shape[0]
+        max_action = action_space.high[0]
+
+        # build policy and value functions
+        self.pi = MLPDetActor(obs_dim, act_dim, hidden_sizes, activation, max_action)
+        self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+        self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
+
+    def act(self, obs):
+        with torch.no_grad():
+            return self.pi(obs).cpu().numpy()
 
 
 class CNNGaussianActorCritic(nn.Module):
@@ -293,14 +333,15 @@ class ReplayBuffer:
         self.device = device
 
 
-    def add(self, obs, act, rew, next_obs, done):
-        self.obs_buf[self.ptr] = obs
-        self.next_obs_buf[self.ptr] = next_obs
-        self.act_buf[self.ptr] = act
-        self.rew_buf[self.ptr] = rew
-        self.done_buf[self.ptr] = done
-        self.ptr = (self.ptr + 1) % self.max_size
-        self.size = min(self.size + 1, self.max_size)
+    def add(self, obss, acts, rews, next_obss, dones):
+        for obs, act, rew, next_obs, done in zip(obss, acts, rews, next_obss, dones):
+            self.obs_buf[self.ptr] = obs
+            self.next_obs_buf[self.ptr] = next_obs
+            self.act_buf[self.ptr] = act
+            self.rew_buf[self.ptr] = rew
+            self.done_buf[self.ptr] = done
+            self.ptr = (self.ptr + 1) % self.max_size
+            self.size = min(self.size + 1, self.max_size)
 
 
     def sample(self, batch_size=100):
@@ -314,7 +355,6 @@ class ReplayBuffer:
             done=self.done_buf[indices]
         )
         return {k: torch.as_tensor(v, dtype=torch.float32).to(self.device) for k, v in batch.items()}
-
 
 
 class PPOBuffer:
@@ -360,6 +400,8 @@ class PPOBuffer:
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
 
+
+
 class PPO_mp_Buffer:
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95, cpu=1):
         self.cpu = cpu
@@ -388,41 +430,6 @@ class PPO_mp_Buffer:
                 [torch.cat(v) for v in zip(*buf_values)]
 
         return dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
-
-
-class dropped_ObsNormalize():
-    def __init__(self, shape, clip=5.0):
-        self.n = 0
-        self.mean = np.zeros(shape)
-        self.mean_diff = np.zeros(shape)
-        self.var = np.zeros(shape)
-        self.clip = clip
-
-    def add(self, obs):
-        '''
-        by math
-        En = En-1 + (xn - En-1) / n
-        Fn = Fn-1 + (xn - En-1) * (xn - En)
-            Fn = n * Var_n | Fn-1 = (n - 1) * Var_n-1
-        So Var_n = (n-1)/n * (xn - En-1)**2 + (n-1)/n * Var_n-1
-        '''
-        assert obs.shape == self.mean.shape, "obs must be the same dim"
-        self.n += 1
-        old_mean = self.mean.copy()
-        self.mean += (obs - self.mean) / self.n
-        self.mean_diff += (obs - old_mean) * (obs - self.mean)
-        self.var = self.mean_diff/self.n if self.n > 1 else np.square(self.mean)
-
-    def normalize(self, obs):
-        obs = np.asarray(obs)
-        self.add(obs)
-        obs = (obs - self.mean) / np.sqrt(self.var)
-        return np.clip(obs, -self.clip, self.clip)
-
-    def normalize_without_add(self, obs, idx):
-        obs = np.asarray(obs)
-        obs = (obs - self.mean[idx]) / np.sqrt(self.var[idx])
-        return np.clip(obs, -self.clip, self.clip)
 
 
 class ObsNormalize():
