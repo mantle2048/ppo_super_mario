@@ -53,8 +53,9 @@ def cnn(channels, kernel_size, stride, padding,  activation):
     for j in range(len(channels)-1):
         # act = activation if j < len(channels)-2 else output_activation
         layers += [nn.Conv2d(channels[j], channels[j+1], kernel_size, stride, padding), activation()]
-    return layers
-    # return nn.Sequential(*layers)
+    layers += [nn.Flatten()]
+    # return layers
+    return nn.Sequential(*layers)
 
 
 class Actor(nn.Module):
@@ -72,7 +73,6 @@ class Actor(nn.Module):
         pi = self._distribution(obs)
         logp_a = None
         if act is not None:
-            act = act.cpu()
             logp_a = self._log_prob_from_distribution(pi, act)
         return pi, logp_a
 
@@ -84,11 +84,12 @@ class MLPCategoricalActor(Actor):
         self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
     def _distribution(self, obs):
-        logits = self.logits_net(obs).cpu()
+        logits = self.logits_net(obs)
         return Categorical(logits=logits)  # note the logits not the probs | and logits are numbers before softmax
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act)
+
 
 
 class MLPGaussianActor(Actor):
@@ -102,8 +103,8 @@ class MLPGaussianActor(Actor):
         self.register_parameter('log_std', self.log_std)
 
     def _distribution(self, obs):
-        mu = self.mu_net(obs).cpu()
-        std = torch.exp(self.log_std).cpu()  # see std as log_std and do exp to prevent negative std
+        mu = self.mu_net(obs)
+        std = torch.exp(self.log_std)  # see std as log_std and do exp to prevent negative std
         return Normal(mu, std)
 
     def _log_prob_from_distribution(self, pi, act):
@@ -191,24 +192,19 @@ class MLPDetActorCritic(nn.Module):
         with torch.no_grad():
             return self.pi(obs).cpu().numpy()
 
+class CNNGaussianActor(Actor):
 
-class CNNGaussianActorCritic(nn.Module):
-    def __init__(self, obs_dim, act_dim, cnn_kwargs):
-        # obs_dim means img_size after flatten
-        super().__init__()
-        self.conv = cnn(**cnn_kwargs)
-        self.linear_net = nn.Linear(obs_dim, obs_dim//2)
+    def __init__(self, obs_dim, cnn_kwargs, activation=nn.ReLU, common_net=None):
+        Actor.__init__(self)
+        if common_net is None:
+            self.conv = cnn(**cnn_kwargs)
+            self.linear = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), activation())
+        else:
+            self.conv, self.linear = common_net
         self.mu_net = nn.Sequential(
-            *self.conv,
-            nn.Flatten(),
-            self.linear_net,
-            nn.Linear(obs_dim//2, act_dim)
-        )
-        self.v_net = nn.Sequential(
-            *self.conv,
-            nn.Flatten(),
-            self.linear_net,
-            nn.Linear(obs_dim//2, 1)
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, act_dim)
         )
 
         log_std = -0.5 * np.ones(act_dim, dtype=np.float32)
@@ -216,8 +212,81 @@ class CNNGaussianActorCritic(nn.Module):
         self.register_parameter('log_std', self.log_std)
 
     def _distribution(self, obs):
-        mu = self.mu_net(obs).cpu()
-        std = torch.exp(self.log_std).cpu()
+        mu = self.mu_net(obs)
+        std = torch.exp(self.log_std)  # see std as log_std and do exp to prevent negative std
+        return Normal(mu, std)
+
+    def _log_prob_from_distribution(self, pi, act):
+        # do sum with the dimonsion of log_prob and then exp the sum you can konw that the multi probs of action
+        return pi.log_prob(act).sum(dim=-1)  # Last axis sum needed for Torch Normal distribution
+
+class CNNCategoricalActor(Actor):
+
+    def __init__(self, obs_dim, act_dim, cnn_kwargs, activation=nn.ReLU, common_net=None):
+        Actor.__init__(self)
+        if common_net is None:
+            self.conv = cnn(**cnn_kwargs)
+            self.linear = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), activation())
+        else:
+            self.conv, self.linear = common_net
+
+        self.logits_net = nn.Sequential(
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, act_dim)
+        )
+
+    def _distribution(self, obs):
+        logits = self.logits_net(obs)
+        return Categorical(logits=logits)  # note the logits not the probs | and logits are numbers before softmax
+
+    def _log_prob_from_distribution(self, pi, act):
+        return pi.log_prob(act)
+
+class CNNCritic(nn.Module):
+
+    def __init__(self, obs_dim, cnn_kwargs, activation=nn.ReLU, common_net=None):
+        super().__init__()
+        if common_net is None:
+            self.conv = cnn(**cnn_kwargs)
+            self.linear = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), activation())
+        else:
+            self.conv, self.linear = common_net
+
+        self.v_net = nn.Sequential(
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, 1)
+        )
+
+    def forward(self, obs):
+        return torch.squeeze(self.v_net(obs), dim=-1)  # Critical to ensure v has right shape
+
+class CNNGaussianActorCritic(nn.Module):
+    def __init__(self, obs_dim, act_dim, cnn_kwargs):
+        # obs_dim means img_size after flatten
+        super().__init__()
+        self.conv = cnn(**cnn_kwargs)
+        self.linear = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), nn.ReLU())
+        self.mu_net = nn.Sequential(
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, act_dim)
+        )
+        self.v_net = nn.Sequential(
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, 1)
+        )
+
+
+        log_std = -0.5 * np.ones(act_dim, dtype=np.float32)
+        self.log_std = nn.Parameter(torch.as_tensor(log_std))
+        self.register_parameter('log_std', self.log_std)
+
+    def _distribution(self, obs):
+        mu = self.mu_net(obs)
+        std = torch.exp(self.log_std)
         return Normal(mu, std)
 
     def _log_prob_from_distribution(self, pi, act):
@@ -230,36 +299,37 @@ class CNNGaussianActorCritic(nn.Module):
         pi = self._distribution(obs)
         logp_a = None
         if act is not None:
-            act = act.cpu()
+            act = act
             logp_a = self._log_prob_from_distribution(pi, act)
         return pi, logp_a
 
     def _v(self, obs):
         return torch.squeeze(self.v_net(obs), dim=-1)
 
-
 class CNNCategoricalActorCritic(nn.Module):
+
     def __init__(self, obs_dim, act_dim, cnn_kwargs):
         # obs_dim means img_size after flatten
         super().__init__()
         self.conv = cnn(**cnn_kwargs)
-        # self.linear_net = nn.Linear(obs_dim, obs_dim//2)
-        self.linear_net = list(mlp([obs_dim, obs_dim//2], nn.Identity))
+        # self.conv1 = cnn(**cnn_kwargs)
+        # self.conv2 = cnn(**cnn_kwargs)
+        self.linear = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), nn.ReLU())
+        # self.linear1 = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), nn.ReLU())
+        # self.linear2 = nn.Sequential(nn.Linear(obs_dim, obs_dim//2), nn.ReLU())
         self.logits_net = nn.Sequential(
-            *self.conv,
-            nn.Flatten(),
-            *self.linear_net,
-            nn.Linear(obs_dim//2, act_dim)
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, act_dim)
         )
         self.v_net = nn.Sequential(
-            *self.conv,
-            nn.Flatten(),
-            *self.linear_net,
-            nn.Linear(obs_dim//2, 1)
+            self.conv,
+            self.linear,
+            nn.Linear(obs_dim // 2, 1)
         )
 
     def _distribution(self, obs):
-        logits = self.logits_net(obs).cpu()
+        logits = self.logits_net(obs)
         return Categorical(logits=logits)
 
     def _log_prob_from_distribution(self, pi, act):
@@ -272,15 +342,14 @@ class CNNCategoricalActorCritic(nn.Module):
         pi = self._distribution(obs)
         logp_a = None
         if act is not None:
-            act = act.cpu()
+            act = act
             logp_a = self._log_prob_from_distribution(pi, act)
         return pi, logp_a
 
     def _v(self, obs):
         return torch.squeeze(self.v_net(obs), dim=-1)
 
-
-class CNNActorCritic(nn.Module):
+class CNNJoinActorCritic(nn.Module):
 
     def __init__(self, observation_space, action_space, hidden_sizes=None, activation=nn.ReLU):
         # hidden_sizes is not used, just for api consistent
@@ -321,6 +390,51 @@ class CNNActorCritic(nn.Module):
         raise NotImplementedError
 
 
+class CNNActorCritic(nn.Module):
+
+    def __init__(self, observation_space, action_space, hidden_sizes=None, activation=nn.ReLU, common=False):
+        # hidden_sizes is not used, just for api consistent, common mean whether pi and v share the cnn net
+        nn.Module.__init__(self)
+
+        input_channel, hight, width, = observation_space.shape
+        channel = 32
+        channels, kernel_size, stride, padding = [input_channel] + [channel] * 4, 3, 2, 1
+        obs_dim = count_cnn_output((hight, width), channel, kernel_size, stride, padding, len(channels)-1)
+
+        cnn_kwargs = dict(
+            channels=channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            activation=activation
+        )
+
+        if common:
+            common_net = (cnn(**cnn_kwargs), nn.Sequential(nn.Linear(obs_dim, obs_dim//2), activation()) )
+        else:
+            common_net = None
+
+        # policy builder depends on action space
+        if isinstance(action_space, Box):
+            self.pi = CNNGaussianActor(obs_dim, action_space.shape[0], cnn_kwargs, activation, common_net)
+
+        elif isinstance(action_space, Discrete):
+            self.pi = CNNCategoricalActor(obs_dim, action_space.n, cnn_kwargs, activation, common_net)
+
+        # build value function
+        self.v = CNNCritic(obs_dim, cnn_kwargs, activation, common_net)
+
+    def _step(self, obs):
+        with torch.no_grad():
+            dist = self.pi._distribution(obs)
+            a = dist.sample()
+            logp_a = self.pi._log_prob_from_distribution(dist, a)
+            v = self.v(obs)
+        return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy()
+
+    def forward(self):
+        raise NotImplementedError
+
 class ReplayBuffer:
 
     def __init__(self, obs_dim, act_dim, size=int(1e6), device='cpu'):
@@ -358,7 +472,8 @@ class ReplayBuffer:
 
 
 class PPOBuffer:
-    def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95):
+
+    def __init__(self, state_dim, action_dim, size, gamma=0.99, lam=0.95, device='cpu'):
         self.obs_buf = np.zeros(combined_shape(size, state_dim), dtype=np.float32)
         self.act_buf = np.zeros(combined_shape(size, action_dim), dtype=np.float32).squeeze()
         self.rew_buf = np.zeros(size, dtype=np.float32)
@@ -367,6 +482,7 @@ class PPOBuffer:
         self.ret_buf = np.zeros(size, dtype=np.float32)
         self.logp_buf = np.zeros(size, dtype=np.float32)
 
+        self.device = device
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
@@ -398,15 +514,14 @@ class PPOBuffer:
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
 
         data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf, adv=self.adv_buf, logp=self.logp_buf, val=self.val_buf)
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
-
+        return {k: torch.as_tensor(v, dtype=torch.float32).to(self.device) for k, v in data.items()}
 
 
 class PPO_mp_Buffer:
-    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95, cpu=1):
+    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95, cpu=1, device='cpu'):
         self.cpu = cpu
         self.max_size = size
-        self.buffers = [PPOBuffer(obs_dim, act_dim, size, gamma, lam) for _ in range(cpu)]
+        self.buffers = [PPOBuffer(obs_dim, act_dim, size, gamma, lam, device) for _ in range(cpu)]
 
         self.ptr = 0
 

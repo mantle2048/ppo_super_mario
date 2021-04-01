@@ -66,9 +66,9 @@ class PPO:
         return self.step(obs)[0]
 
     def compute_loss_pi(self, data):
-        obs, act, adv, logp_old = data['obs'].to(self.device), \
-                                  data['act'].to(self.device), \
-                                  data['adv'],                 \
+        obs, act, adv, logp_old = data['obs'], \
+                                  data['act'], \
+                                  data['adv'], \
                                   data['logp']
         # Policy loss
         dist, logp = self.ac.pi(obs, act)
@@ -88,9 +88,9 @@ class PPO:
         return loss_pi, pi_info
 
     def compute_loss_v(self, data):
-        obs, ret = data['obs'].to(self.device), data['ret'].to(self.device)
+        obs, ret = data['obs'], data['ret']
         if self.use_clipped_value_loss:
-            val_old = data['val'].to(self.device)
+            val_old = data['val']
             val = self.ac.v(obs)
             val_clipped = val_old + (val - val_old).clamp(-self.clip_val_param, self.clip_val_param)
             v_loss = (val - ret).pow(2)
@@ -186,17 +186,17 @@ class PPO2:
         return self.step(obs)[0]
 
     def compute_loss_pi(self, data):
-        obs, act, adv, logp_old = data['obs'].to(self.device), \
-                                  data['act'].to(self.device), \
-                                  data['adv'],                 \
+        obs, act, adv, logp_old = data['obs'], \
+                                  data['act'], \
+                                  data['adv'], \
                                   data['logp']
         # Policy loss
         dist, logp = self.ac.pi(obs, act)
         ratio = torch.exp(logp - logp_old)
         clip_adv = torch.clamp(ratio, 1 - self.clip_ratio, 1 + self.clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
-        # loss_pi = -(torch.min(ratio * adv, clip_adv)).mean() - 0.01 * dist.entropy().mean()
-        # whether to use entropy depends on the performence
+        # loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean() - 0.01 * dist.entropy().mean()
+        # cnn use entropy loss
 
         # Useful extra info
         approx_kl = (logp_old - logp).mean().abs().item()
@@ -208,9 +208,9 @@ class PPO2:
         return loss_pi, pi_info
 
     def compute_loss_v(self, data):
-        obs, ret = data['obs'].to(self.device), data['ret'].to(self.device)
+        obs, ret = data['obs'], data['ret']
         if self.use_clipped_value_loss:
-            val_old = data['val'].to(self.device)
+            val_old = data['val']
             val = self.ac.v(obs)
             val_clipped = val_old + (val - val_old).clamp(-self.clip_val_param, self.clip_val_param)
             v_loss = (val - ret).pow(2)

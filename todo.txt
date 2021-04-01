@@ -1,7 +1,2 @@
 1: Make ObsNormal from function to Wrapper with env
-2: Make ppo_buffer's data in cuda
-3: change entropy loss as Loss_function
 4: convert gym.Monitor to Yan.Monior
-5: rename ActorCritic
-6: Add cnn hidden_sizes
-7: add Maxpooling for cnn net

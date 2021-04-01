@@ -19,7 +19,7 @@ from yanrl.user_config import DEFAULT_MODEL_DIR
 def train():
     parser = argparse.ArgumentParser()
     parser.add_argument('--policy', type=str, default='ppo')
-    parser.add_argument('--policy_type', type=str, default='cnn')
+    parser.add_argument('--policy_type', type=str, default='mlp')
     parser.add_argument('--env', type=str, default='HalfCheetah-v3')
     parser.add_argument('--hidden', type=int, default=64)
     parser.add_argument('--layers_len', type=int, default=2)
@@ -89,26 +89,19 @@ def train():
         "logger": logger
     }
 
-    policy = PPO2(**kwargs) if args.policy_type == 'cnn' else PPO(**kwargs)
+    policy = PPO(**kwargs)
     # policy.ac.share_memory()
 
     # Count variables
-    if args.policy_type == 'mlp':
-        var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
-        logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
-    else:
-        var_counts = core.count_vars(policy.ac)
-        logger.log('\nNumber of parameters: \t pi_v: %d\n'%var_counts)
+    var_counts = tuple(core.count_vars(module) for module in [policy.ac.pi, policy.ac.v])
+    logger.log('\nNumber of parameters: \t pi: %d, \t v: %d\n'%var_counts)
 
 
     # Set up model saving
     logger.setup_pytorch_saver(policy.ac.state_dict())
 
     local_steps_per_epoch = int(args.steps_per_epoch / args.cpu)
-    if args.cpu == 0:
-        buf = core.PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam)
-    else:
-        buf = core.PPO_mp_Buffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam, args.cpu)
+    buf = core.PPO_mp_Buffer(obs_dim, act_dim, local_steps_per_epoch, args.gamma, args.lam, args.cpu, args.device)
     # Prepare for interaction with environment
     start_time = time.time()
     obs, done = env.reset(), [False for _ in range(args.cpu)]
@@ -181,7 +174,7 @@ def train():
         logger.log_tabular('KL', average_only=True)
         logger.log_tabular('ClipFrac', average_only=True)
         logger.log_tabular('StopIter', average_only=True)
-        logger.log_tabular('Time', int((time.time()-start_time) / 60))
+        logger.log_tabular('Time', int((time.time()-start_time) // 60))
         if args.obs_norm:
             logger.log_tabular('obs_mean', ObsNormal.mean.mean())
             logger.log_tabular('obs_std', np.sqrt(ObsNormal.var).mean())

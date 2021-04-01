@@ -14,7 +14,7 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 
 
 if __name__ == '__main__' and '__file__' in globals():
-    env_name = 'SuperMarioBros-5-2-v0'
+    env_name = 'SuperMarioBros-1-2-v0'
     # env_name = 'HalfCheetah-v3'
     policy_type = 'cnn'
     # policy_type = 'mlp'
