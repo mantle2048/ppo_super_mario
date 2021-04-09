@@ -2,7 +2,7 @@
 
 logdir="data"
 algo=$1
-envs=("SuperMarioBros-1-2-v0" "SuperMarioBros-1-3-v0" "SuperMarioBros-2-3-v0" "SuperMarioBros-3-1-v0" "SuperMarioBros-3-3-v0" "SuperMarioBros-4-2-v0" "SuperMarioBros-4-3-v0" "SuperMarioBros-5-2-v0" "SuperMarioBros-5-3-v0")
+envs=("SuperMarioBros-1-2-v0" "SuperMarioBros-1-3-v0")
 
 for ((i=0;i<1;i+=1)); do
     for env in ${envs[@]}; do
@@ -10,14 +10,15 @@ for ((i=0;i<1;i+=1)); do
             --env $env \
             --seed $i \
             --policy_type 'cnn' \
-            --epochs 250 \
-            --max_episode_len 1000 \
-            --steps_per_epoch 4000 \
-            --datestamp \
+            --epochs 1500 \
+            --max_episode_len 250 \
+            --steps_per_epoch 2000 \
             --pi_lr 1e-4 \
-            --cpu 4 \
-            --gamma 0.99 \
-            --device 'cuda:2'
+            --vf_lr 1e-4 \
+            --cpu 8 \
+            --gamma 0.992 \
+            --lam 1.00 \
+            --device 'cuda:0'
     done
 done
 

@@ -15,8 +15,6 @@ from yanrl.utils.logx import EpochLogger, setup_logger_kwargs
 from yanrl.utils.env import make_envs
 from yanrl.user_config import DEFAULT_MODEL_DIR
 
-os.environ['CUDA_VISBLE_DEVICES'] = '1'
-
 
 class PPO:
     def __init__(

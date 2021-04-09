@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import json
 import matplotlib.pyplot as plt
+import sys
+sys.path.insert(0, os.path.abspath('../..'))
 from yanrl.user_config import DEFAULT_IMG_DIR, DEFAULT_DATA_DIR
 
 DIV_LINE_WIDTH = 50
@@ -173,7 +175,7 @@ def jupyter_make_plot():
     exp_idx = 0
     units = dict()
     kwargs = dict(
-        all_logdirs = [ os.path.join(DEFAULT_DATA_DIR, 'ppo-HalfCheetah-v3/')]
+        all_logdirs = [ os.path.join(DEFAULT_DATA_DIR, 'mp_ppo_SuperMarioBros-1-2-v0/')],
         legend = None,
         xaxis = 'TotalEnvInteracts',
         values = ['AverageEpRet', 'AverageVVals', 'LossPi', 'LossV', 'Entropy', 'KL', 'ClipFrac'],
@@ -181,12 +183,13 @@ def jupyter_make_plot():
         smooth = 1
     )
     make_plots(**kwargs)
-# jupyter_make_plot()
+print(DEFAULT_DATA_DIR)
+jupyter_make_plot()
 
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--logdir',default=['data/ppo_HalfCheetah-v3/'], nargs='*')
+    parser.add_argument('--logdir',default=[os.path.join(DEFAULT_DATA_DIR, 'mp_ppo_SuperMarioBros-1-2-v0/')], nargs='*')
     parser.add_argument('--legend', '-l',nargs='*')
     parser.add_argument('--xaxis', '-x', default='TotalEnvInteracts')
     parser.add_argument('--values', '-y', default='Performance', nargs='*')

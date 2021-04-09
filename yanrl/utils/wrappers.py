@@ -61,9 +61,9 @@ class ReshapeReward(gym.Wrapper):
         self.cur_score = info["score"]
         if done:
             if info["flag_get"]:
-                rew += 50.
+                rew += 100.
             else:
-                rew -= 50.
+                rew -= 100.
         return obs, rew / 10., done, info
 
     def reset(self):

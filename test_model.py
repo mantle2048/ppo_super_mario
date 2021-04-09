@@ -18,14 +18,14 @@ from gym_super_mario_bros.actions import SIMPLE_MOVEMENT
 if __name__ == '__main__' and '__file__' in globals():
     parser = argparse.ArgumentParser()
     parser.add_argument('--policy_name', type=str, default='mp_ppo')
-    parser.add_argument('--env_name', type=str, default='SuperMarioBros-1-1-v0')
+    parser.add_argument('--env_name', type=str, default='SuperMarioBros-8-1-v0')
     parser.add_argument('--policy_type', type=str, default='cnn')
     args = parser.parse_args()
 
 
     exp_name = args.policy_name + '_' + args.env_name
 
-    output=f'../data/{exp_name}/{exp_name}_seed_0'
+    output=f'./data/{exp_name}/{exp_name}_seed_0'
 
     env = gym.make(args.env_name)
 
@@ -48,7 +48,7 @@ if __name__ == '__main__' and '__file__' in globals():
     policy = PPO(**kwargs)
     policy.ac.load_state_dict(torch.load(model_name, map_location='cpu'))
     obs_normal=joblib.load(save_name)['obs_normal']
-    obs_normal.cpu=1
+    if obs_normal is not None: obs_normal.cpu=1
     # This Command for slower(setpts > 1.0) of faster(setpts < 1.0) video
     # ffmpeg -r 60 -i input.mp4 -filter:v "setpts=2.0*PTS" output.mp4
     # This Command for add audio to video(Magic)
@@ -56,11 +56,13 @@ if __name__ == '__main__' and '__file__' in globals():
     # Source: https://stackoverflow.com/questions/20254846/how-to-add-an-external-audio-track-to-a-video-file-using-vlc-or-ffmpeg-command-l
     for ep in range(10):
         obs = env.reset()
-        obs = obs_normal.normalize_all(obs, update=False)
+        if obs_normal is not None:
+            obs = obs_normal.normalize_all(obs, update=False)
         while True:
             act = policy.act(obs)
             nx_obs, rew, done, info = env.step(act)
             obs = nx_obs
-            obs = obs_normal.normalize_all(obs, update=False)
+            if obs_normal is not None:
+                obs = obs_normal.normalize_all(obs, update=False)
             if done:
                 break
